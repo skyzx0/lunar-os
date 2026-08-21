@@ -1,0 +1,7 @@
+out/
+work/
+repo/out/
+__pycache__/
+*.iso
+*.qcow2
+*.fd
