@@ -3,15 +3,13 @@
 
 base
 linux-hardened
+linux-lts
 linux-firmware
 intel-ucode
 amd-ucode
 mkinitcpio
 mkinitcpio-archiso
 erofs-utils
-syslinux
-edk2-shell
-memtest86+-efi
 
 # installer
 python

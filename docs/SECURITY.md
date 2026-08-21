@@ -84,6 +84,11 @@ prevent Windows from booting. The installer passes `--microsoft` for this
 reason; that also means Microsoft's signing key stays trusted, which is a real
 weakening, and it is the pragmatic choice on consumer laptops.
 
+**UEFI only.** The install medium has no BIOS boot path. Signed unified kernel
+images, Secure Boot enrolment and TPM2 sealing all require UEFI, so a machine
+that can only boot BIOS cannot run the installed system regardless. Offering a
+BIOS live medium would just move the failure later.
+
 **Suspend leaks keys.** Nothing here clears the LUKS master key from RAM on
 suspend. If the threat is someone taking the machine while it is asleep,
 configure hibernation instead of suspend, or shut down.
