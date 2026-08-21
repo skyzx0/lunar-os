@@ -1,0 +1,12 @@
+pkgname=lunar-desktop-hyprland
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Hyprland session for Lunar OS"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('hyprland' 'xdg-desktop-portal-hyprland' 'greetd'
+        'foot' 'waybar' 'wofi' 'mako' 'swaylock' 'swayidle' 'grim' 'slurp'
+        'wl-clipboard' 'pipewire' 'pipewire-pulse' 'wireplumber'
+        'polkit-gnome' 'gnome-keyring' 'xdg-desktop-portal-gtk')
+optdepends=('greetd-tuigreet: TUI greeter, AUR')

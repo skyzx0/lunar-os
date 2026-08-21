@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lunar-setup"
+version = "0.1.0"
+description = "Lunar OS installer"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+lunar-setup = "lunar_setup.__main__:main"
+
+[tool.setuptools]
+packages = ["lunar_setup"]

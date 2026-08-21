@@ -1,0 +1,203 @@
+"""Runs the actual installation once the wizard has collected a Config."""
+
+import os
+import subprocess
+
+from . import disk, hardening
+from .profiles import DESKTOPS
+
+ROOT = "/mnt"
+
+BASE = [
+    "base", "base-devel", "linux-firmware", "intel-ucode", "amd-ucode",
+    "lvm2", "cryptsetup", "btrfs-progs", "e2fsprogs", "dosfstools",
+    "networkmanager", "nftables", "systemd-resolvconf",
+    "sudo", "zsh", "vim", "git", "man-db", "pacman-contrib", "reflector",
+    "lunar-keyring", "lunar-hardening", "lunar-setup",
+]
+
+SECURITY = [
+    "apparmor", "audit", "usbguard", "firejail",
+    "bubblewrap", "flatpak", "arch-audit", "sbctl", "tpm2-tools",
+    "tpm2-tss", "rkhunter", "lynis", "chrony", "tor",
+    "torsocks", "macchanger", "polkit",
+]
+
+# In the AUR, so pacstrap cannot install them. Left to the user post-install
+# with an AUR helper; the hardening code degrades gracefully when they are
+# absent rather than leaving a system that will not boot.
+AUR_SUGGESTED = ["hardened_malloc", "opensnitch"]
+
+
+def chroot(cmd, log=None, check=True):
+    return hardening.chroot(cmd, log=log, check=check)
+
+
+def run(cmd, log=None, check=True, input_=None):
+    return disk.run(cmd, check=check, input_=input_, log=log)
+
+
+def kernel_packages(profile) -> list:
+    if profile.hardened_kernel:
+        # linux-lts is the fallback: linux-hardened has broken on new laptops
+        # more than once, and an unbootable machine is not a secure machine.
+        return ["linux-hardened", "linux-hardened-headers", "linux-lts"]
+    return ["linux", "linux-headers", "linux-lts"]
+
+
+def package_set(cfg) -> list:
+    p = cfg.profile_obj()
+    pkgs = list(BASE) + kernel_packages(p) + list(SECURITY)
+    pkgs.append(cfg.desktop_obj().meta)
+    if dm := cfg.desktop_obj().dm:
+        pkgs.append(dm)
+    pkgs += cfg.extra_packages
+    return sorted(set(pkgs))
+
+
+def install(cfg, emit) -> None:
+    log = emit
+    p = cfg.profile_obj()
+
+    # ---- disk ----------------------------------------------------------
+    log("Partitioning", accent=True)
+    esp, luks_part = disk.partition(cfg.disk, log=log)
+
+    if cfg.wipe_disk:
+        log("Overwriting the data partition with random bytes", accent=True)
+        log("  This can take hours on a large spinning disk.")
+        disk.secure_erase(luks_part, log=log)
+
+    log("Creating the LUKS2 container (argon2id, 1 GiB memory cost)", accent=True)
+    disk.luks_format(luks_part, cfg.luks_passphrase, log=log)
+    disk.make_volumes(cfg.filesystem, log=log)
+    disk.mount_esp(esp, log=log)
+    uuid = disk.luks_uuid(luks_part)
+
+    # ---- base system ---------------------------------------------------
+    log("Selecting mirrors", accent=True)
+    run(["reflector", "--protocol", "https", "--latest", "20",
+         "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"],
+        check=False, log=log)
+
+    log("Installing packages", accent=True)
+    pkgs = package_set(cfg)
+    log(f"  {len(pkgs)} packages")
+    subprocess.run(["pacstrap", "-K", ROOT] + pkgs, check=True)
+
+    log("Generating fstab", accent=True)
+    with open(f"{ROOT}/etc/fstab", "a") as fh:
+        fh.write(subprocess.run(["genfstab", "-U", ROOT],
+                                capture_output=True, text=True, check=True).stdout)
+    # tmpfs with noexec for /tmp and a real size cap
+    with open(f"{ROOT}/etc/fstab", "a") as fh:
+        fh.write("tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,size=2G,mode=1777 0 0\n")
+        fh.write("proc /proc proc nosuid,nodev,noexec,hidepid=2,gid=proc 0 0\n")
+
+    # ---- locale, time, identity ----------------------------------------
+    log("Configuring the system", accent=True)
+    chroot(f"ln -sf /usr/share/zoneinfo/{cfg.timezone} /etc/localtime && hwclock --systohc",
+           log=log)
+    chroot(f"sed -i 's/^#\\s*{cfg.locale}/{cfg.locale}/' /etc/locale.gen && locale-gen", log=log)
+    hardening.write("/etc/locale.conf", f"LANG={cfg.locale}\n", log=log)
+    hardening.write("/etc/vconsole.conf", f"KEYMAP={cfg.keymap}\n", log=log)
+    hardening.write("/etc/hostname", cfg.hostname + "\n", log=log)
+    hardening.write("/etc/hosts", f"""
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   {cfg.hostname}.localdomain {cfg.hostname}
+""", log=log)
+
+    # ---- users ---------------------------------------------------------
+    chroot(f"useradd -m -G wheel,audio,video,storage -s /bin/zsh {cfg.username}", log=log)
+    chroot(f"chpasswd <<< '{cfg.username}:{cfg.user_password}'", log=log)
+    if cfg.root_locked:
+        chroot("passwd -l root", log=log)
+    hardening.write("/etc/sudoers.d/10-lunar", """
+%wheel ALL=(ALL:ALL) ALL
+Defaults passwd_timeout=1
+Defaults timestamp_timeout=5
+Defaults lecture=never
+Defaults use_pty
+Defaults logfile=/var/log/sudo.log
+Defaults !targetpw
+""", mode=0o440, log=log)
+
+    # ---- hardening -----------------------------------------------------
+    log("Applying the " + p.name + " profile", accent=True)
+    hardening.apply(cfg, uuid, log=log)
+
+    # ---- initramfs + unified kernel image -------------------------------
+    log("Building the unified kernel image", accent=True)
+    hardening.write("/etc/mkinitcpio.conf.d/lunar.conf", """
+HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole
+       block sd-encrypt lvm2 filesystems fsck)
+COMPRESSION="zstd"
+COMPRESSION_OPTIONS=(-19)
+""", log=log)
+
+    kernel = "linux-hardened" if p.hardened_kernel else "linux"
+    for k in (kernel, "linux-lts"):
+        hardening.write(f"/etc/mkinitcpio.d/{k}.preset", f"""
+ALL_kver="/boot/vmlinuz-{k}"
+PRESETS=('default')
+default_uki="/efi/EFI/Linux/lunar-{k}.efi"
+default_options="--splash /usr/share/systemd/bootctl/splash-arch.bmp"
+""", log=log)
+    chroot("mkinitcpio -P", log=log)
+
+    # ---- boot ----------------------------------------------------------
+    log("Installing the boot loader", accent=True)
+    chroot("bootctl install --esp-path=/efi", log=log)
+    hardening.write("/efi/loader/loader.conf", """
+default lunar-linux-hardened.efi
+timeout 0
+console-mode keep
+editor no
+""", log=log)
+
+    if p.secure_boot:
+        log("Enrolling Secure Boot keys", accent=True)
+        log("  Firmware must already be in Setup Mode for this to succeed.")
+        r = chroot("sbctl create-keys && sbctl enroll-keys --microsoft", check=False, log=log)
+        if r.returncode != 0:
+            log("  Key enrolment failed. Run 'sbctl enroll-keys' after clearing")
+            log("  the platform key in firmware. The system still boots.")
+        else:
+            chroot("sbctl sign -s /efi/EFI/Linux/lunar-linux-hardened.efi "
+                   "&& sbctl sign -s /efi/EFI/BOOT/BOOTX64.EFI "
+                   "&& sbctl sign -s /efi/EFI/systemd/systemd-bootx64.efi",
+                   check=False, log=log)
+
+    if p.tpm2_unlock:
+        log("Sealing the LUKS key to the TPM (PCRs 0,2,4,7)", accent=True)
+        r = subprocess.run(
+            ["systemd-cryptenroll", "--tpm2-device=auto",
+             "--tpm2-pcrs=0+2+4+7", "--tpm2-with-pin=yes", luks_part],
+            input=cfg.luks_passphrase, text=True, capture_output=True)
+        if r.returncode != 0:
+            log("  No usable TPM2 found. Passphrase unlock stays as the only method.")
+
+    # ---- display manager ------------------------------------------------
+    d = cfg.desktop_obj()
+    if d.dm:
+        chroot(f"systemctl enable {d.dm}", check=False, log=log)
+
+    # ---- repo -----------------------------------------------------------
+    chroot("pacman-key --populate lunar", check=False, log=log)
+    chroot("systemctl enable lunar-updates.timer", check=False, log=log)
+
+    log("")
+    log("Optional, from the AUR after first boot:", accent=True)
+    log("  " + " ".join(AUR_SUGGESTED))
+    log("")
+    log("Installation complete.", accent=True)
+    log("Remove the installation medium and reboot.")
+    if p.secure_boot:
+        log("On first boot, re-enable Secure Boot in firmware.")
+
+
+def unmount(log=None) -> None:
+    subprocess.run(["swapoff", "-a"], check=False)
+    subprocess.run(["umount", "-R", ROOT], check=False)
+    subprocess.run(["cryptsetup", "close", disk.MAPPER], check=False)

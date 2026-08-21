@@ -1,0 +1,58 @@
+# Live medium contents. The installed system is defined in
+# lunar-setup/lunar_setup/install.py, not here.
+
+base
+linux-hardened
+linux-firmware
+intel-ucode
+amd-ucode
+mkinitcpio
+mkinitcpio-archiso
+erofs-utils
+syslinux
+edk2-shell
+memtest86+-efi
+
+# installer
+python
+lunar-setup
+lunar-keyring
+arch-install-scripts
+reflector
+
+# storage
+cryptsetup
+lvm2
+btrfs-progs
+e2fsprogs
+dosfstools
+gptfdisk
+parted
+nvme-cli
+smartmontools
+
+# boot integrity
+sbctl
+efibootmgr
+tpm2-tools
+tpm2-tss
+
+# network
+networkmanager
+iwd
+nftables
+wireless-regdb
+
+# rescue and inspection
+vim
+htop
+lsof
+strace
+tcpdump
+rsync
+curl
+git
+man-db
+zsh
+testdisk
+ddrescue

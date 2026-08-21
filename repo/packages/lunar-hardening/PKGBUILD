@@ -1,0 +1,22 @@
+pkgname=lunar-hardening
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Baseline hardening configuration for Lunar OS"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('apparmor' 'nftables' 'audit')
+optdepends=('hardened_malloc: preloaded allocator, AUR')
+backup=('etc/sysctl.d/99-lunar-hardening.conf'
+        'etc/modprobe.d/lunar-blacklist.conf'
+        'etc/nftables.conf')
+source=("lunar-os-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/lunar-os/hardening"
+  find etc -type f | while read -r f; do
+    install -Dm644 "$f" "$pkgdir/$f"
+  done
+  chmod 700 "$pkgdir/etc/nftables.conf"
+}

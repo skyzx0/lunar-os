@@ -1,0 +1,101 @@
+name: Build ISO
+
+# Manual runs, plus an automatic build whenever a v* tag is pushed.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Attach the ISO to a GitHub Release'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write        # needed only to create the release
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub runners ship with about 21 GiB free on /, and mkarchiso needs
+      # roughly 25 GiB of scratch space. The preinstalled toolchains nobody
+      # here uses are worth about 25 GiB between them.
+      - name: Free disk space
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/.ghcup \
+                      /usr/local/share/boost \
+                      /usr/local/share/powershell \
+                      /usr/lib/jvm \
+                      "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune -af
+          sudo apt-get clean
+          echo "After:"; df -h / | tail -1
+
+      - name: Build the build container
+        run: docker build --platform linux/amd64 -t lunar-build build/
+
+      - name: Sanity check
+        run: |
+          docker volume create lunar-build-vol
+          mkdir -p out
+          docker run --rm --privileged \
+            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
+            lunar-build check
+
+      # CI builds are unsigned on purpose. Putting the repository signing key
+      # into Actions secrets would mean a compromised workflow, action or
+      # runner could sign packages your machines install as root. Sign on a
+      # machine you control instead - see docs/BUILD-CI.md.
+      - name: Build packages (unsigned)
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
+            lunar-build repo-unsigned
+
+      - name: Build the ISO
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
+            lunar-build iso
+          df -h / | tail -1
+
+      - name: Checksums
+        run: |
+          cd out
+          sha256sum *.iso > SHA256SUMS
+          cat SHA256SUMS
+          ls -lh *.iso
+
+      # Artifacts count against the account's storage quota, which is small on
+      # the free plan. Kept short-lived; a release is the better home for an
+      # ISO you want to keep.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunar-iso
+          path: |
+            out/*.iso
+            out/SHA256SUMS
+          retention-days: 5
+          compression-level: 0    # the ISO is already compressed
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && tag="build-$(date +%Y%m%d-%H%M)"
+          gh release create "$tag" out/*.iso out/SHA256SUMS \
+            --title "Lunar OS $tag" \
+            --notes "Unsigned CI build. Verify against SHA256SUMS. Packages in this ISO are not signed - see docs/BUILD-CI.md before trusting it with a real machine."
