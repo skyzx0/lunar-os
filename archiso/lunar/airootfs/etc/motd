@@ -2,9 +2,13 @@
   LUNAR OS  live medium
 
   Install Lunar OS       desktop icon, or run: sudo lunar-setup
-  Documentation          docs/ in the source tree
+  Manual steps           lunar-setup --steps
+  Memory report          lunar-setup --memory
 
-  This live session runs as the unprivileged user "lunar" with no
-  password. sshd is not installed and the firewall drops all inbound
-  traffic.
+  If the desktop did not start, you are on the rescue console.
+  Run: lunar-diagnose
+
+  Live session runs as "lunar" with no password. Root is reachable from
+  the local console only. sshd is not installed and the firewall drops
+  all inbound traffic.
 

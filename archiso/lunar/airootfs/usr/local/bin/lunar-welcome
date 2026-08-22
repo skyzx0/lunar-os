@@ -14,12 +14,22 @@ import shutil
 import subprocess
 import sys
 
-from PyQt6.QtCore import Qt, QProcess, QRectF, QSize
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
-from PyQt6.QtWidgets import (
-    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget,
-)
+try:
+    from PyQt6.QtCore import Qt, QProcess, QRectF, QSize
+    from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
+    from PyQt6.QtWidgets import (
+        QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
+        QPushButton, QVBoxLayout, QWidget,
+    )
+except ImportError as exc:                                    # pragma: no cover
+    # A welcome screen that fails to import must not leave the user with
+    # nothing. Hand them the installer directly instead of a traceback.
+    sys.stderr.write(f"lunar-welcome: {exc}\n")
+    for term, args in (("konsole", ["-e"]), ("foot", ["-e"]), ("xterm", ["-e"])):
+        if shutil.which(term):
+            os.execvp(term, [term, *args, "sudo", "lunar-setup"])
+    sys.stderr.write("Run: sudo lunar-setup\n")
+    sys.exit(1)
 
 BG = "#0a0b0d"
 FG = "#e6e9f0"

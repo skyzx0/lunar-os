@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Creates the passwordless live-session account. Live media are a shared,
-# throwaway context: a password here would protect nothing and only get in
-# the way of someone trying to install.
+# Creates the passwordless live-session account.
+#
+# Live media are a shared, throwaway context; a password protects nothing here
+# and only obstructs someone trying to install. Root stays reachable from the
+# local console on purpose: if the display manager fails, that console is the
+# only way to diagnose it.
 set -euo pipefail
 
 id lunar &>/dev/null || useradd -m -G wheel,audio,video,storage,network \
     -s /bin/zsh -c "Lunar OS live session" lunar
 
+# Empty passwords, not locked accounts. pam_unix needs 'nullok' to accept
+# these at a TTY, which is set in the live PAM configuration.
 passwd -d lunar
-passwd -l root
+passwd -d root
 
 install -Dm0440 /dev/stdin /etc/sudoers.d/10-lunar-live <<'SUDO'
 %wheel ALL=(ALL:ALL) NOPASSWD: ALL

@@ -144,15 +144,14 @@ enable_live_units() {
         ln -sf /dev/null "$ar/etc/systemd/system/$unit"
     done
 
-    # zram-generator and plymouth need enabling too.
-    mkdir -p "$ar/etc/systemd/system/sysinit.target.wants"
-    ln -sf /usr/lib/systemd/system/systemd-zram-setup@.service \
-        "$ar/etc/systemd/system/sysinit.target.wants/systemd-zram-setup@zram0.service"
+    # zram needs no symlink: zram-generator produces its units from
+    # /etc/systemd/zram-generator.conf during early boot. Enabling a template
+    # instance by hand just creates a unit that fails.
 
-    # The splash theme has to be selected inside the image, not on the host.
-    if [[ -d "$ar/usr/share/plymouth/themes/lunar" ]]; then
-        log "Plymouth theme present"
-    fi
+    # A rescue console must survive whatever else breaks.
+    mkdir -p "$ar/etc/systemd/system/getty.target.wants"
+    ln -sf /usr/lib/systemd/system/getty@.service \
+        "$ar/etc/systemd/system/getty.target.wants/getty@tty2.service"
 }
 
 cmd_iso() {

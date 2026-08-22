@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar OS Welcome
+Comment=Install Lunar OS or explore the live session
+Exec=lunar-welcome
+Icon=lunar
+Terminal=false
+OnlyShowIn=KDE;GNOME;XFCE;
+Categories=System;

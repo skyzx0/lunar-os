@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Lunar OS Welcome
+Comment=Install Lunar OS or explore the live session
 Exec=lunar-welcome
-Icon=drive-harddisk
+Icon=lunar
 Terminal=false
 OnlyShowIn=KDE;GNOME;XFCE;
 X-KDE-autostart-phase=2
+X-GNOME-Autostart-Delay=2

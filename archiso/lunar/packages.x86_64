@@ -78,6 +78,8 @@ polkit-kde-agent
 
 # --- welcome UI and boot splash --------------------------------------------
 python-pyqt6
+qt6-wayland
+qt6-svg
 plymouth
 lunar-branding
 

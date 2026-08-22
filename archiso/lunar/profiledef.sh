@@ -27,4 +27,6 @@ file_permissions=(
   ["/root/.zlogin"]="0:0:644"
   ["/root/.bash_profile"]="0:0:644"
   ["/usr/local/bin/lunar-live-user"]="0:0:755"
+  ["/usr/local/bin/lunar-welcome"]="0:0:755"
+  ["/usr/local/bin/lunar-diagnose"]="0:0:755"
 )
