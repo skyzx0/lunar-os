@@ -100,14 +100,25 @@ Test the ISO before writing it to hardware:
     docs/BUILD-MACOS.md     building from macOS, and the traps in doing so
     docs/BUILD-WINDOWS.md   building from Windows, same
     docs/BUILD-CI.md        building on GitHub Actions or a rented VM
+    docs/PERFORMANCE.md     what it actually idles at, and why
+    branding/               boot splash artwork and Plymouth theme
 
 The files under `hardening/etc/` are generated from `hardening.py` so the
 installer and the package can never drift apart. Regenerate them after editing
 that module.
 
+## Live session
+
+The medium boots straight into a Plasma session with a black half-moon splash,
+autologin as an unprivileged `lunar` user with no password, and a welcome
+window offering the guided installer, a terminal installer, or the manual
+command sequence.
+
 ## Installer
 
     lunar-setup                      interactive
+    lunar-setup --steps              print the manual installation commands
+    lunar-setup --memory             report memory use, to check the claims
     lunar-setup --unattended a.json  answer file, same keys as Config
     lunar-setup --reapply            re-apply the profile on a running system
 

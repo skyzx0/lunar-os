@@ -194,7 +194,22 @@ def main() -> int:
                     help="JSON answer file, same keys as Config")
     ap.add_argument("--reapply", action="store_true",
                     help="re-apply the security profile to the running system")
+    ap.add_argument("--steps", action="store_true",
+                    help="print the manual installation commands and exit")
+    ap.add_argument("--memory", action="store_true",
+                    help="report current memory use, for checking idle claims")
     args = ap.parse_args()
+
+    # These two are read-only and useful without privileges.
+    if args.steps:
+        from .manual import STEPS
+        print(STEPS)
+        return 0
+
+    if args.memory:
+        from .manual import report_memory
+        report_memory()
+        return 0
 
     if os.geteuid() != 0:
         print("lunar-setup must run as root.", file=sys.stderr)

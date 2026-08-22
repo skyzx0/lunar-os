@@ -38,7 +38,9 @@ def kernel_cmdline(profile, luks_uuid: str) -> str:
         "resume=/dev/lunar/swap",
         "rw",
         "quiet",
+        "splash",
         "loglevel=3",
+        "vt.global_cursor_default=0",
         # memory hygiene
         "init_on_alloc=1",
         "init_on_free=1",
@@ -241,10 +243,186 @@ ipv6.ip6-privacy=2
 """
 
 
+def coredump_conf() -> str:
+    """Core dumps of a privileged process can contain keys, passphrases and
+    decrypted buffers, and they land in a world-readable journal."""
+    return """
+[Coredump]
+Storage=none
+ProcessSizeMax=0
+"""
+
+
+def journald_conf() -> str:
+    return """
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse=200M
+RuntimeMaxUse=50M
+MaxLevelStore=info
+# Forwarding to a console that may be a serial line an attacker can read.
+ForwardToSyslog=no
+ForwardToWall=no
+Seal=yes
+"""
+
+
+def systemd_service_hardening() -> dict:
+    """Drop-ins for services that face the network or run as root.
+
+    Upstream units are written for compatibility across distributions; these
+    tighten the ones that matter without patching the packages themselves.
+    """
+    common = """
+[Service]
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+"""
+    return {
+        # NetworkManager needs to write its state and talk to netlink.
+        "NetworkManager": common + """
+ReadWritePaths=/etc/NetworkManager /var/lib/NetworkManager /run
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE
+""",
+        "systemd-resolved": common + """
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+""",
+        "chronyd": common + """
+ReadWritePaths=/var/lib/chrony
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_TIME
+# Clock adjustment is the whole job, so ProtectClock cannot apply here.
+ProtectClock=no
+""",
+    }
+
+
+def audit_rules(profile) -> str:
+    """Rules aimed at the transitions that matter, not at volume.
+
+    An audit configuration that logs everything gets turned off within a week.
+    """
+    return """
+## Managed by lunar-setup.
+-D
+-b 8192
+--backlog_wait_time 60000
+-f 1
+
+# Identity and authorisation changes
+-w /etc/passwd -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/sudoers -p wa -k privilege
+-w /etc/sudoers.d/ -p wa -k privilege
+
+# Anything that alters the trust chain of the running kernel
+-w /etc/modprobe.d/ -p wa -k modules
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+-w /etc/ld.so.preload -p wa -k preload
+-w /boot/ -p wa -k boot
+-w /efi/ -p wa -k boot
+
+# Security policy
+-w /etc/apparmor.d/ -p wa -k mac
+-w /etc/nftables.conf -p wa -k firewall
+-w /etc/sysctl.d/ -p wa -k sysctl
+
+# Privilege escalation actually performed
+-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k setuid_exec
+
+# Time changes, which are how log correlation gets defeated
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time
+
+# Lock the ruleset. Changing it now requires a reboot, which is itself logged.
+-e 2
+"""
+
+
+def memory_tuning(profile) -> str:
+    """Reclaim and cache behaviour.
+
+    Paired with zram: a high swappiness is correct when swap is compressed
+    RAM rather than a disk, and wrong when it is not.
+    """
+    return """
+# Managed by lunar-setup.
+vm.swappiness = 180
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+vm.page-cluster = 0
+vm.vfs_cache_pressure = 50
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+vm.max_map_count = 1048576
+"""
+
+
+def zram_conf() -> str:
+    return """
+# Compressed swap in RAM. Cheaper than swapping to an encrypted disk, and the
+# contents are never written anywhere an attacker can read them later.
+[zram0]
+zram-size = min(ram / 2, 8192)
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+"""
+
+
 def apply(cfg, luks_part_uuid: str, log=None) -> None:
     p = cfg.profile_obj()
 
     write("/etc/sysctl.d/99-lunar-hardening.conf", sysctl(p), log=log)
+    write("/etc/sysctl.d/99-lunar-memory.conf", memory_tuning(p), log=log)
+    write("/etc/systemd/zram-generator.conf", zram_conf(), log=log)
+    write("/etc/systemd/coredump.conf.d/lunar.conf", coredump_conf(), log=log)
+    write("/etc/systemd/journald.conf.d/lunar.conf", journald_conf(), log=log)
+
+    for svc, conf in systemd_service_hardening().items():
+        write(f"/etc/systemd/system/{svc}.service.d/lunar-hardening.conf", conf, log=log)
+
+    if p.auditd:
+        write("/etc/audit/rules.d/lunar.rules", audit_rules(p), mode=0o600, log=log)
+
+    # su should not be available to accounts that are not administrators;
+    # sudo with its logging and timeouts is the supported path.
+    write("/etc/pam.d/su", """
+auth       sufficient pam_rootok.so
+auth       required   pam_wheel.so use_uid
+auth       required   pam_unix.so
+account    required   pam_unix.so
+session    required   pam_unix.so
+""", log=log)
+
+    # /dev/shm is writable by every user and is a standard staging ground for
+    # payloads. It has no legitimate need to be executable.
+    write("/etc/tmpfiles.d/lunar-shm.conf", "d /dev/shm 1777 root root -\n", log=log)
+
+    # A stable machine-id is a durable cross-boot identifier that leaks in DHCP
+    # and in some telemetry. Regenerate it per boot on the anonymity profile.
+    if p.tor_transparent:
+        write("/etc/machine-id", "uninitialized\n", log=log)
     write("/etc/modprobe.d/lunar-blacklist.conf", blacklist(), log=log)
     write("/etc/nftables.conf", nftables(p), mode=0o700, log=log)
     os.makedirs(f"{ROOT}/etc/nftables.d", exist_ok=True)

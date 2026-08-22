@@ -1,0 +1,5 @@
+# Baloo indexes the whole filesystem in the background. On a live medium it
+# indexes a read-only squashfs it will never see again, costing 150-250 MB of
+# RSS and a lot of I/O for nothing.
+[Basic Settings]
+Indexing-Enabled=false

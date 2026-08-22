@@ -45,14 +45,12 @@ wireless-regdb
 vim
 htop
 lsof
-strace
 tcpdump
 rsync
 curl
 git
 man-db
 zsh
-testdisk
 ddrescue
 
 # --- live Plasma session ---------------------------------------------------
@@ -62,7 +60,6 @@ plasma-desktop
 plasma-workspace
 plasma-nm
 plasma-pa
-plasma-systemmonitor
 kscreen
 powerdevil
 breeze
@@ -70,8 +67,6 @@ breeze-gtk
 breeze-icons
 sddm
 konsole
-dolphin
-kate
 xorg-xwayland
 pipewire
 pipewire-pulse
@@ -80,3 +75,11 @@ noto-fonts
 ttf-dejavu
 kwallet
 polkit-kde-agent
+
+# --- welcome UI and boot splash --------------------------------------------
+python-pyqt6
+plymouth
+lunar-branding
+
+# --- memory --------------------------------------------------------------
+zram-generator

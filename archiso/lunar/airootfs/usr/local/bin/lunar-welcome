@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""lunar-welcome - the first thing you see in a Lunar OS live session.
+
+Offers the guided installer, a terminal installer, and the manual command
+sequence for people who would rather drive it themselves.
+
+PyQt6 rather than QML: a QML-only app cannot spawn a process without a C++
+backend, and every button here launches something. The moon is drawn with
+QPainter rather than shipped as an asset so it stays sharp on any display.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+
+from PyQt6.QtCore import Qt, QProcess, QRectF, QSize
+from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
+    QPushButton, QVBoxLayout, QWidget,
+)
+
+BG = "#0a0b0d"
+FG = "#e6e9f0"
+MUTED = "#7e838f"
+ACCENT = "#5ec8d8"
+LINE = "#1c1f24"
+
+MANUAL_STEPS = """\
+# Lunar OS - manual installation
+#
+# The guided installer does exactly this. Run it yourself if you want a
+# layout the wizard does not offer, or you just want to see the steps.
+
+# 1. Identify the target disk. Everything on it will be destroyed.
+lsblk -d -o NAME,PATH,SIZE,MODEL
+
+# 2. Partition: 1 GiB ESP, remainder for the encrypted container.
+sgdisk -Z /dev/nvme0n1
+sgdisk -n 1:0:+1024M -t 1:ef00 -c 1:LUNAR_ESP \\
+       -n 2:0:0      -t 2:8309 -c 2:LUNAR_LUKS /dev/nvme0n1
+
+# 3. Encrypt. argon2id at 1 GiB makes offline cracking expensive rather
+#    than merely inconvenient.
+cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 \\
+    --key-size 512 --hash sha512 --pbkdf argon2id \\
+    --pbkdf-memory 1048576 --iter-time 5000 --sector-size 4096 \\
+    /dev/nvme0n1p2
+cryptsetup open /dev/nvme0n1p2 lunarcrypt
+
+# 4. LVM inside the container, so swap is encrypted by inheritance and
+#    hibernation images are not readable.
+pvcreate /dev/mapper/lunarcrypt
+vgcreate lunar /dev/mapper/lunarcrypt
+lvcreate -L 8G  -n swap lunar
+lvcreate -l 100%FREE -n root lunar
+
+# 5. Filesystems and subvolumes.
+mkfs.btrfs -f -L lunar /dev/lunar/root
+mkswap /dev/lunar/swap && swapon /dev/lunar/swap
+mount /dev/lunar/root /mnt
+btrfs subvolume create /mnt/@
+btrfs subvolume create /mnt/@home
+btrfs subvolume create /mnt/@var
+btrfs subvolume create /mnt/@log
+btrfs subvolume create /mnt/@pkg
+btrfs subvolume create /mnt/@snapshots
+umount /mnt
+
+opts=noatime,compress=zstd:3,ssd,space_cache=v2
+mount -o $opts,subvol=@ /dev/lunar/root /mnt
+mkdir -p /mnt/{home,var,efi}
+mount -o $opts,subvol=@home,nodev,nosuid /dev/lunar/root /mnt/home
+mount -o $opts,subvol=@var,nodev,nosuid,noexec /dev/lunar/root /mnt/var
+
+mkfs.fat -F32 -n LUNARESP /dev/nvme0n1p1
+mount -o umask=0077,nodev,nosuid,noexec /dev/nvme0n1p1 /mnt/efi
+
+# 6. Base system.
+pacstrap -K /mnt base base-devel linux-hardened linux-lts linux-firmware \\
+    intel-ucode amd-ucode lvm2 cryptsetup btrfs-progs networkmanager \\
+    nftables apparmor audit sudo zsh vim
+
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# 7. From here the guided installer applies the security profile, builds a
+#    signed unified kernel image and enrols Secure Boot keys. To do that by
+#    hand, follow docs/SECURITY.md - or just run:
+lunar-setup
+"""
+
+
+def has(cmd: str) -> bool:
+    return shutil.which(cmd) is not None
+
+
+def terminal_for(command: str) -> list:
+    """Find a terminal emulator and build an argv that runs command in it."""
+    for term, args in (
+        ("konsole", ["--fullscreen", "-e"]),
+        ("foot", ["-F", "-e"]),
+        ("alacritty", ["-e"]),
+        ("xterm", ["-e"]),
+    ):
+        if has(term):
+            return [term, *args, "bash", "-c", command]
+    return []
+
+
+class Moon(QWidget):
+    """A half moon: full disc with the left half masked away."""
+
+    def __init__(self, diameter=96, parent=None):
+        super().__init__(parent)
+        self.d = diameter
+        self.setFixedSize(QSize(diameter, diameter))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addEllipse(QRectF(0, 0, self.d, self.d))
+        # Subtract a half-plane, not a second disc: an offset disc gives a
+        # lune with a curved inner edge, which is a crescent, not a half moon.
+        clip = QPainterPath()
+        clip.addRect(QRectF(self.d / 2, 0, self.d / 2, self.d))
+        p.fillPath(path.intersected(clip), QColor(FG))
+        p.end()
+
+
+class StepsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Manual installation steps")
+        self.resize(760, 620)
+        self.setStyleSheet(f"background:{BG}; color:{FG};")
+
+        box = QVBoxLayout(self)
+        box.setContentsMargins(20, 20, 20, 20)
+        box.setSpacing(14)
+
+        head = QLabel("Manual installation")
+        head.setFont(QFont("", 16, QFont.Weight.DemiBold))
+        box.addWidget(head)
+
+        note = QLabel("These are the same operations the guided installer performs. "
+                      "Adjust the device names before running anything.")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{MUTED};")
+        box.addWidget(note)
+
+        text = QPlainTextEdit(MANUAL_STEPS)
+        text.setReadOnly(True)
+        text.setFont(QFont("monospace", 10))
+        text.setStyleSheet(
+            f"background:#101216; color:{FG}; border:1px solid {LINE};"
+            f"border-radius:6px; padding:10px;")
+        box.addWidget(text, 1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+
+        copy = QPushButton("Copy to clipboard")
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(MANUAL_STEPS))
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        for b in (copy, close):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton{{background:transparent; color:{FG}; padding:8px 16px;"
+                f"border:1px solid {LINE}; border-radius:6px;}}"
+                f"QPushButton:hover{{border-color:{ACCENT}; color:{ACCENT};}}")
+            row.addWidget(b)
+        box.addLayout(row)
+
+
+class Action(QFrame):
+    """One row in the action list: title, description, whole row clickable."""
+
+    def __init__(self, title, description, handler, primary=False, parent=None):
+        super().__init__(parent)
+        self.handler = handler
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        border = ACCENT if primary else LINE
+        self.setStyleSheet(
+            f"QFrame{{background:transparent; border:1px solid {border};"
+            f"border-radius:10px;}}"
+            f"QFrame:hover{{border-color:{ACCENT}; background:#101216;}}")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(3)
+
+        t = QLabel(title)
+        t.setFont(QFont("", 12, QFont.Weight.DemiBold))
+        t.setStyleSheet(f"color:{ACCENT if primary else FG}; border:none;")
+        lay.addWidget(t)
+
+        d = QLabel(description)
+        d.setWordWrap(True)
+        d.setStyleSheet(f"color:{MUTED}; border:none;")
+        lay.addWidget(d)
+
+    def mousePressEvent(self, _):
+        self.handler()
+
+
+class Welcome(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Lunar OS")
+        self.resize(680, 620)
+        self.setStyleSheet(f"background:{BG}; color:{FG};")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(48, 40, 48, 32)
+        root.setSpacing(0)
+
+        head = QHBoxLayout()
+        head.setSpacing(20)
+        head.addWidget(Moon(72))
+
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        name = QLabel("Lunar OS")
+        name.setFont(QFont("", 26, QFont.Weight.Light))
+        titles.addWidget(name)
+        sub = QLabel("Encrypted by default. Hardened by default.")
+        sub.setStyleSheet(f"color:{MUTED};")
+        titles.addWidget(sub)
+        titles.addStretch(1)
+        head.addLayout(titles)
+        head.addStretch(1)
+        root.addLayout(head)
+        root.addSpacing(34)
+
+        for title, desc, fn, primary in (
+            ("Install Lunar OS",
+             "Guided installer. Erases a disk, encrypts it, and applies the "
+             "security profile you choose.",
+             self.install_gui, True),
+            ("Install from a terminal",
+             "The same installer with a shell alongside it, for when something "
+             "needs inspecting mid-install.",
+             self.install_terminal, False),
+            ("Show the manual steps",
+             "Every command the installer runs, to copy and adapt yourself.",
+             self.show_steps, False),
+            ("Explore the live session",
+             "Close this and use Lunar OS without installing. Nothing is "
+             "written to disk.",
+             self.close, False),
+        ):
+            root.addWidget(Action(title, desc, fn, primary))
+            root.addSpacing(12)
+
+        root.addStretch(1)
+
+        foot = QLabel("This live session is unsigned and intended for evaluation. "
+                      "Verify the ISO checksum before installing on hardware you rely on.")
+        foot.setWordWrap(True)
+        foot.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        root.addWidget(foot)
+
+    # ---- actions ----
+
+    def _run_in_terminal(self, command: str) -> None:
+        argv = terminal_for(command)
+        if not argv:
+            self._fallback(command)
+            return
+        QProcess.startDetached(argv[0], argv[1:])
+        self.close()
+
+    def _fallback(self, command: str) -> None:
+        box = QDialog(self)
+        box.setWindowTitle("No terminal found")
+        box.setStyleSheet(f"background:{BG}; color:{FG};")
+        lay = QVBoxLayout(box)
+        msg = QLabel("No terminal emulator was found. Switch to a console with "
+                     "Ctrl+Alt+F2 and run:")
+        msg.setWordWrap(True)
+        lay.addWidget(msg)
+        cmd = QPlainTextEdit(command)
+        cmd.setReadOnly(True)
+        cmd.setFont(QFont("monospace", 10))
+        lay.addWidget(cmd)
+        box.exec()
+
+    def install_gui(self):
+        self._run_in_terminal("sudo lunar-setup")
+
+    def install_terminal(self):
+        self._run_in_terminal(
+            "echo 'Run: sudo lunar-setup'; echo; exec bash")
+
+    def show_steps(self):
+        StepsDialog(self).exec()
+
+
+def main() -> int:
+    # Nothing here needs root, and a welcome screen running as root would be
+    # a poor precedent for a distribution that hardens everything else.
+    if os.geteuid() == 0:
+        print("lunar-welcome should not run as root.", file=sys.stderr)
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("Lunar OS")
+    w = Welcome()
+    w.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

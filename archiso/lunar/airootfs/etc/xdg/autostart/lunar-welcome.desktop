@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar OS Welcome
+Exec=lunar-welcome
+Icon=drive-harddisk
+Terminal=false
+OnlyShowIn=KDE;GNOME;XFCE;
+X-KDE-autostart-phase=2

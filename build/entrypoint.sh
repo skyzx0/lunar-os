@@ -135,6 +135,24 @@ enable_live_units() {
     # The root autologin that archiso puts on tty1 fights with the display
     # manager for the console. Drop it now that the session is graphical.
     rm -f "$ar/root/.zlogin" "$ar/root/.bash_profile"
+
+    # Services that cost memory and do nothing useful from a live medium.
+    # Masking rather than disabling, so a dependency cannot pull them back in.
+    mkdir -p "$ar/etc/systemd/system"
+    for unit in systemd-oomd.service packagekit.service \
+                plasma-baloorunner.service man-db.service; do
+        ln -sf /dev/null "$ar/etc/systemd/system/$unit"
+    done
+
+    # zram-generator and plymouth need enabling too.
+    mkdir -p "$ar/etc/systemd/system/sysinit.target.wants"
+    ln -sf /usr/lib/systemd/system/systemd-zram-setup@.service \
+        "$ar/etc/systemd/system/sysinit.target.wants/systemd-zram-setup@zram0.service"
+
+    # The splash theme has to be selected inside the image, not on the host.
+    if [[ -d "$ar/usr/share/plymouth/themes/lunar" ]]; then
+        log "Plymouth theme present"
+    fi
 }
 
 cmd_iso() {

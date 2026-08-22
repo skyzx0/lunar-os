@@ -13,7 +13,9 @@ BASE = [
     "lvm2", "cryptsetup", "btrfs-progs", "e2fsprogs", "dosfstools",
     "networkmanager", "nftables", "systemd-resolvconf",
     "sudo", "zsh", "vim", "git", "man-db", "pacman-contrib", "reflector",
-    "lunar-keyring", "lunar-hardening", "lunar-setup",
+    "zram-generator",
+    "lunar-keyring", "lunar-hardening", "lunar-setup", "lunar-branding",
+    "plymouth",
 ]
 
 SECURITY = [
@@ -93,6 +95,8 @@ def install(cfg, emit) -> None:
     with open(f"{ROOT}/etc/fstab", "a") as fh:
         fh.write("tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,size=2G,mode=1777 0 0\n")
         fh.write("proc /proc proc nosuid,nodev,noexec,hidepid=2,gid=proc 0 0\n")
+        # /dev/shm is world-writable and a standard place to stage a payload.
+        fh.write("tmpfs /dev/shm tmpfs rw,nosuid,nodev,noexec 0 0\n")
 
     # ---- locale, time, identity ----------------------------------------
     log("Configuring the system", accent=True)
@@ -161,10 +165,20 @@ Defaults !targetpw
     # ---- initramfs + unified kernel image -------------------------------
     log("Building the unified kernel image", accent=True)
     hardening.write("/etc/mkinitcpio.conf.d/lunar.conf", """
-HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole
-       block sd-encrypt lvm2 filesystems fsck)
+# plymouth-encrypt belongs to the busybox 'encrypt' hook and conflicts with
+# sd-encrypt. With a systemd initramfs, systemd-ask-password renders the
+# passphrase prompt through plymouth on its own.
+HOOKS=(base systemd plymouth autodetect microcode modconf kms keyboard
+       sd-vconsole block sd-encrypt lvm2 filesystems fsck)
 COMPRESSION="zstd"
 COMPRESSION_OPTIONS=(-19)
+""", log=log)
+
+    hardening.write("/etc/plymouth/plymouthd.conf", """
+[Daemon]
+Theme=lunar
+ShowDelay=0
+DeviceTimeout=8
 """, log=log)
 
     kernel = "linux-hardened" if p.hardened_kernel else "linux"
