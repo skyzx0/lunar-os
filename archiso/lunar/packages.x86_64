@@ -82,6 +82,9 @@ qt6-wayland
 qt6-svg
 plymouth
 lunar-branding
+lunar-cli
+pciutils
+lunar-look
 
 # --- memory --------------------------------------------------------------
 zram-generator

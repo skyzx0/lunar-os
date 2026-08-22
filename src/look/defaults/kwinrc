@@ -1,0 +1,35 @@
+# Window manager defaults.
+
+[Compositing]
+AnimationSpeed=2
+GLCore=true
+LatencyPolicy=Low
+WindowsBlockCompositing=true
+
+[Plugins]
+# Blur and background contrast are the two most expensive effects and the
+# first things that hurt on integrated graphics or software rendering.
+blurEnabled=false
+contrastEnabled=false
+kwin4_effect_squashEnabled=false
+kwin4_effect_translucencyEnabled=false
+slideEnabled=true
+wobblywindowsEnabled=false
+
+[Windows]
+BorderlessMaximizedWindows=true
+FocusPolicy=ClickToFocus
+
+[org.kde.kdecoration2]
+BorderSize=None
+BorderSizeAuto=false
+ButtonsOnLeft=
+ButtonsOnRight=IAX
+library=org.kde.breeze
+theme=Breeze
+
+[Effect-overview]
+BorderActivate=9
+
+[TabBox]
+LayoutName=thumbnail_grid

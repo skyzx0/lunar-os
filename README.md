@@ -101,6 +101,9 @@ Test the ISO before writing it to hardware:
     docs/BUILD-WINDOWS.md   building from Windows, same
     docs/BUILD-CI.md        building on GitHub Actions or a rented VM
     docs/PERFORMANCE.md     what it actually idles at, and why
+    docs/COMMANDS.md        the Lunar command set
+    docs/LOOK.md            desktop appearance, and what is not themed
+    src/                    lum, lunarfetch, and the look package
     branding/               boot splash artwork and Plymouth theme
 
 The files under `hardening/etc/` are generated from `hardening.py` so the
@@ -113,6 +116,17 @@ The medium boots straight into a Plasma session with a black half-moon splash,
 autologin as an unprivileged `lunar` user with no password, and a welcome
 window offering the guided installer, a terminal installer, or the manual
 command sequence.
+
+## Commands
+
+    lum get / drop / up / find / why / audit / verify / rollback
+    lunarfetch                       what this machine is, and whether it is
+                                     actually enforcing what it claims
+    lunar-setup                      installer and hardening
+    lunar-diagnose                   live medium, when the desktop will not start
+
+`pacman`, `systemctl` and the rest are untouched. See `docs/COMMANDS.md` for
+what each adds over the tool it sits on, and `docs/LOOK.md` for the desktop.
 
 ## Installer
 

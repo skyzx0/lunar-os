@@ -15,6 +15,7 @@ BASE = [
     "sudo", "zsh", "vim", "git", "man-db", "pacman-contrib", "reflector",
     "zram-generator",
     "lunar-keyring", "lunar-hardening", "lunar-setup", "lunar-branding",
+    "lunar-cli",
     "plymouth",
 ]
 
@@ -223,10 +224,29 @@ editor no
         if r.returncode != 0:
             log("  No usable TPM2 found. Passphrase unlock stays as the only method.")
 
-    # ---- display manager ------------------------------------------------
+    # ---- display manager and appearance ---------------------------------
     d = cfg.desktop_obj()
     if d.dm:
         chroot(f"systemctl enable {d.dm}", check=False, log=log)
+
+    if d.dm == "sddm":
+        hardening.write("/etc/sddm.conf.d/lunar.conf", """
+[Theme]
+Current=lunar
+CursorTheme=breeze_cursors
+
+[General]
+DisplayServer=wayland
+""", log=log)
+
+    if d.key == "plasma":
+        # Plasma reads this once, when a session first starts without an
+        # existing configuration. Copied per-user rather than enforced, so
+        # anything the user changes afterwards stays changed.
+        chroot(f"install -Dm644 -o {cfg.username} -g {cfg.username} "
+               "/usr/share/lunar/layout/org.lunaros.desktop.js "
+               f"/home/{cfg.username}/.config/plasma-org.kde.plasma.desktop-layout.js",
+               check=False, log=log)
 
     # ---- repo -----------------------------------------------------------
     chroot("pacman-key --populate lunar", check=False, log=log)

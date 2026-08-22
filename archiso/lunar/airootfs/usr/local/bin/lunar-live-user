@@ -24,3 +24,14 @@ SUDO
 install -d -o lunar -g lunar /home/lunar/Desktop
 install -Dm755 -o lunar -g lunar /usr/share/applications/lunar-setup.desktop \
     /home/lunar/Desktop/lunar-setup.desktop
+
+# Plasma reads the layout script once, on first start of a session that has no
+# existing configuration. Setting it here rather than shipping a generated
+# plasma-org.kde.plasma.desktop-appletsrc means it survives Plasma updates
+# that change the config format.
+install -d -o lunar -g lunar /home/lunar/.config
+if [ -f /usr/share/lunar/layout/org.lunaros.desktop.js ]; then
+    install -Dm644 -o lunar -g lunar \
+        /usr/share/lunar/layout/org.lunaros.desktop.js \
+        /home/lunar/.config/plasma-org.kde.plasma.desktop-layout.js
+fi

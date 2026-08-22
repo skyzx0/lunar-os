@@ -1,0 +1,29 @@
+# Lunar OS desktop defaults. Copied into a new user's home, not enforced -
+# anything here can be changed in System Settings and will stay changed.
+
+[General]
+ColorScheme=Lunar
+Name=Lunar
+# Single-click is Plasma's default and surprises almost everyone.
+fixed=Noto Sans Mono,10,-1,5,50,0,0,0,0,0
+font=Noto Sans,10,-1,5,50,0,0,0,0,0
+menuFont=Noto Sans,10,-1,5,50,0,0,0,0,0
+smallestReadableFont=Noto Sans,8,-1,5,50,0,0,0,0,0
+toolBarFont=Noto Sans,10,-1,5,50,0,0,0,0,0
+widgetStyle=Breeze
+XftAntialias=true
+XftHintStyle=hintslight
+XftSubPixel=rgb
+
+[KDE]
+AnimationDurationFactor=0.4
+LookAndFeelPackage=org.lunaros.desktop
+SingleClick=false
+ShowDeleteCommand=false
+widgetStyle=Breeze
+
+[Icons]
+Theme=breeze-dark
+
+[WM]
+activeFont=Noto Sans,10,-1,5,50,0,0,0,0,0
