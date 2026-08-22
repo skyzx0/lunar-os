@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 try:
-    from PyQt6.QtCore import Qt, QProcess, QRectF, QSize
+    from PyQt6.QtCore import Qt, QProcess, QRectF, QSize, QTimer
     from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
     from PyQt6.QtWidgets import (
         QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
@@ -99,23 +99,6 @@ genfstab -U /mnt >> /mnt/etc/fstab
 #    hand, follow docs/SECURITY.md - or just run:
 lunar-setup
 """
-
-
-def has(cmd: str) -> bool:
-    return shutil.which(cmd) is not None
-
-
-def terminal_for(command: str) -> list:
-    """Find a terminal emulator and build an argv that runs command in it."""
-    for term, args in (
-        ("konsole", ["--fullscreen", "-e"]),
-        ("foot", ["-F", "-e"]),
-        ("alacritty", ["-e"]),
-        ("xterm", ["-e"]),
-    ):
-        if has(term):
-            return [term, *args, "bash", "-c", command]
-    return []
 
 
 class Moon(QWidget):
@@ -275,13 +258,46 @@ class Welcome(QWidget):
 
     # ---- actions ----
 
-    def _run_in_terminal(self, command: str) -> None:
-        argv = terminal_for(command)
-        if not argv:
-            self._fallback(command)
+    def _launch(self, mode: str) -> None:
+        """Hand off to lunar-install, and only close once it has started.
+
+        Closing first meant a launch failure left the user with nothing on
+        screen and no indication anything had gone wrong.
+        """
+        launcher = shutil.which("lunar-install")
+        if not launcher:
+            self._fallback("sudo lunar-setup")
             return
-        QProcess.startDetached(argv[0], argv[1:])
-        self.close()
+
+        ok, pid = QProcess.startDetached(launcher, [mode], os.path.expanduser("~"))
+        if not ok:
+            self._fallback(f"{launcher} {mode}")
+            return
+
+        # Hide rather than quit: if the terminal dies immediately, bring the
+        # window back instead of leaving an empty desktop.
+        self.hide()
+        QTimer.singleShot(2500, lambda: self._confirm_running(pid))
+
+    def _confirm_running(self, pid: int) -> None:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        except PermissionError:
+            # It exists, it just is not ours to signal.
+            alive = True
+        except OSError:
+            # Cannot tell. Assume it worked rather than reappearing over a
+            # terminal the user is already typing into.
+            alive = True
+
+        if alive:
+            QApplication.quit()
+        else:
+            self.show()
+            self.raise_()
 
     def _fallback(self, command: str) -> None:
         box = QDialog(self)
@@ -299,11 +315,10 @@ class Welcome(QWidget):
         box.exec()
 
     def install_gui(self):
-        self._run_in_terminal("sudo lunar-setup")
+        self._launch("--run")
 
     def install_terminal(self):
-        self._run_in_terminal(
-            "echo 'Run: sudo lunar-setup'; echo; exec bash")
+        self._launch("--shell")
 
     def show_steps(self):
         StepsDialog(self).exec()

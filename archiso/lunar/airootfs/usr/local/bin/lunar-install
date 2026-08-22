@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# lunar-install - opens the installer in a terminal that stays open.
+#
+# The failure this exists to prevent: konsole -e sudo lunar-setup closes the
+# instant the installer exits, so an installer that dies in the first second
+# produces a window that flashes and disappears, taking the error with it.
+# Here the window is held open on any non-zero exit, and everything is logged.
+
+set -uo pipefail
+
+LOG=/tmp/lunar-setup.log
+
+# --- inner: what runs inside the terminal ---------------------------------
+
+if [[ "${1:-}" == "--run" ]]; then
+    clear
+    printf '\033]0;Lunar OS installer\007'
+
+    # Tee rather than redirect: the user watches it, and the log survives.
+    sudo lunar-setup 2>&1 | tee "$LOG"
+    rc=${PIPESTATUS[0]}
+
+    if [[ $rc -ne 0 ]]; then
+        echo
+        echo "  lunar-setup exited with status $rc"
+        echo "  The full output is in $LOG"
+        echo
+        read -r -p "  Press enter to close this window "
+    fi
+    exit "$rc"
+fi
+
+if [[ "${1:-}" == "--shell" ]]; then
+    clear
+    cat <<'MSG'
+
+  Lunar OS install shell.
+
+    sudo lunar-setup          start the guided installer
+    lunar-setup --steps       print the manual commands
+    lunar-diagnose            collect system state if something is wrong
+
+MSG
+    exec "${SHELL:-/bin/bash}" -i
+fi
+
+# --- outer: find a terminal and launch the inner half ---------------------
+
+self="$(command -v lunar-install || echo "$0")"
+mode="${1:---run}"
+
+for term in konsole foot alacritty kitty xterm; do
+    command -v "$term" >/dev/null || continue
+    case "$term" in
+        konsole)   exec "$term" --hide-menubar --hide-tabbar -e "$self" "$mode" ;;
+        foot)      exec "$term" -e "$self" "$mode" ;;
+        alacritty) exec "$term" -e "$self" "$mode" ;;
+        kitty)     exec "$term" "$self" "$mode" ;;
+        xterm)     exec "$term" -fa Monospace -fs 11 -e "$self" "$mode" ;;
+    esac
+done
+
+# No terminal at all. Say so somewhere the user will actually see it rather
+# than failing silently in a desktop session with no console attached.
+msg="No terminal emulator found. Switch to a console with Ctrl+Alt+F2 and run: sudo lunar-setup"
+if command -v kdialog >/dev/null; then
+    kdialog --error "$msg"
+elif command -v zenity >/dev/null; then
+    zenity --error --text="$msg"
+fi
+echo "$msg" >&2
+exit 1

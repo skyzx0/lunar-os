@@ -22,8 +22,15 @@ SUDO
 # The installer is curses and needs a terminal, so the desktop launcher opens
 # one rather than trying to run it directly.
 install -d -o lunar -g lunar /home/lunar/Desktop
+# Plasma 6 will not launch a .desktop file from the desktop unless it is
+# marked executable and its target is trusted. Copying the system entry and
+# setting the exec bit satisfies both.
 install -Dm755 -o lunar -g lunar /usr/share/applications/lunar-setup.desktop \
     /home/lunar/Desktop/lunar-setup.desktop
+if command -v kwriteconfig6 >/dev/null; then
+    sudo -u lunar kwriteconfig6 --file kiorc --group "Executable scripts" \
+        --key behaviourOnLaunch execute 2>/dev/null || true
+fi
 
 # Plasma reads the layout script once, on first start of a session that has no
 # existing configuration. Setting it here rather than shipping a generated

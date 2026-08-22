@@ -154,9 +154,43 @@ enable_live_units() {
         "$ar/etc/systemd/system/getty.target.wants/getty@tty2.service"
 }
 
+# pacstrap aborts on file conflicts, and the message points at the package
+# rather than at the profile that duplicated the file. Catch it here, where
+# the fix is obvious, instead of 3 minutes into a package download.
+check_profile_conflicts() {
+    local repo_dir="$WORK/repo/out/lunar/os/x86_64"
+    local ar="$WORK/archiso/lunar/airootfs"
+    local conflicts=0
+
+    [[ -d "$ar" ]] || return 0
+    for pkg in "$repo_dir"/*.pkg.tar.zst; do
+        [[ -f "$pkg" ]] || continue
+        while read -r path; do
+            path="${path#./}"
+            # Directories are expected to overlap; only files conflict. The
+            # archive root normalises to an empty string, which would match
+            # airootfs itself.
+            [[ -z "$path" || "$path" == */ ]] && continue
+            [[ "$path" == .* ]] && continue          # .PKGINFO, .BUILDINFO
+            if [[ -f "$ar/$path" ]]; then
+                echo "  conflict: $(basename "$pkg") also ships /$path" >&2
+                conflicts=1
+            fi
+        done < <(tar -tf "$pkg" 2>/dev/null)
+    done
+
+    if (( conflicts )); then
+        echo >&2
+        echo "The archiso profile ships files that a Lunar package also owns." >&2
+        echo "Remove them from archiso/lunar/airootfs and let the package own them." >&2
+        exit 1
+    fi
+}
+
 cmd_iso() {
     sync_source
     enable_live_units
+    check_profile_conflicts
     wire_local_repo
     log "Building the ISO"
     # mkarchiso wants a real Linux work directory with functioning ownership.
