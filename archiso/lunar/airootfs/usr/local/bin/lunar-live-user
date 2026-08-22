@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Creates the passwordless live-session account. Live media are a shared,
+# throwaway context: a password here would protect nothing and only get in
+# the way of someone trying to install.
+set -euo pipefail
+
+id lunar &>/dev/null || useradd -m -G wheel,audio,video,storage,network \
+    -s /bin/zsh -c "Lunar OS live session" lunar
+
+passwd -d lunar
+passwd -l root
+
+install -Dm0440 /dev/stdin /etc/sudoers.d/10-lunar-live <<'SUDO'
+%wheel ALL=(ALL:ALL) NOPASSWD: ALL
+SUDO
+
+# The installer is curses and needs a terminal, so the desktop launcher opens
+# one rather than trying to run it directly.
+install -d -o lunar -g lunar /home/lunar/Desktop
+install -Dm755 -o lunar -g lunar /usr/share/applications/lunar-setup.desktop \
+    /home/lunar/Desktop/lunar-setup.desktop

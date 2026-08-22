@@ -54,3 +54,29 @@ man-db
 zsh
 testdisk
 ddrescue
+
+# --- live Plasma session ---------------------------------------------------
+# Deliberately not plasma-meta: that pulls the full KDE application suite and
+# would roughly double the ISO for software nobody uses from a live medium.
+plasma-desktop
+plasma-workspace
+plasma-nm
+plasma-pa
+plasma-systemmonitor
+kscreen
+powerdevil
+breeze
+breeze-gtk
+breeze-icons
+sddm
+konsole
+dolphin
+kate
+xorg-xwayland
+pipewire
+pipewire-pulse
+wireplumber
+noto-fonts
+ttf-dejavu
+kwallet
+polkit-kde-agent

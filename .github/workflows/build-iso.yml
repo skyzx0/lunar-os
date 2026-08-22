@@ -75,6 +75,21 @@ jobs:
           sha256sum *.iso > SHA256SUMS
           cat SHA256SUMS
           ls -lh *.iso
+          # GitHub release assets are capped at 2 GiB per file. A Plasma live
+          # medium sits close to that, so split when it would not fit and
+          # leave instructions next to the parts.
+          size=$(stat -c%s *.iso)
+          if [ "$size" -gt 2000000000 ]; then
+            echo "ISO exceeds the 2 GiB release asset limit - splitting"
+            split -b 1900M -d *.iso "$(ls *.iso).part"
+            cat > REASSEMBLE.txt <<'EOF'
+          The ISO exceeded GitHub's 2 GiB per-file release limit and was split.
+          Reassemble with:
+            cat lunar-*.iso.part* > lunar.iso
+            sha256sum -c SHA256SUMS
+          EOF
+            ls -lh *.part*
+          fi
 
       # Artifacts count against the account's storage quota, which is small on
       # the free plan. Kept short-lived; a release is the better home for an

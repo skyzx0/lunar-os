@@ -102,6 +102,37 @@ def install(cfg, emit) -> None:
     hardening.write("/etc/locale.conf", f"LANG={cfg.locale}\n", log=log)
     hardening.write("/etc/vconsole.conf", f"KEYMAP={cfg.keymap}\n", log=log)
     hardening.write("/etc/hostname", cfg.hostname + "\n", log=log)
+
+    # Brand the installed system. os-release is what neofetch, GRUB, systemd,
+    # bug trackers and half the desktop read to name the distribution; leaving
+    # it saying "Arch Linux" would be the single most visible wrong thing.
+    # It lives in /usr/lib and is symlinked from /etc, and the arch package
+    # owns it, so the file is replaced and pacman is told to leave it alone.
+    hardening.write("/usr/lib/os-release", """
+NAME="Lunar OS"
+PRETTY_NAME="Lunar OS"
+ID=lunar
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="0;36"
+HOME_URL="https://lunaros.org"
+DOCUMENTATION_URL="https://lunaros.org/docs"
+SUPPORT_URL="https://lunaros.org/support"
+BUG_REPORT_URL="https://lunaros.org/bugs"
+LOGO=lunar
+""", log=log)
+    hardening.write("/etc/lsb-release", """
+LSB_VERSION=1.4
+DISTRIB_ID=LunarOS
+DISTRIB_RELEASE=rolling
+DISTRIB_DESCRIPTION="Lunar OS"
+""", log=log)
+    hardening.write("/etc/issue", "\nLunar OS \\r (\\l)\n\n", log=log)
+
+    # pacman would restore Arch's os-release on the next filesystem update.
+    chroot("grep -q '^NoUpgrade.*os-release' /etc/pacman.conf || "
+           "sed -i 's|^#NoUpgrade.*|NoUpgrade = usr/lib/os-release|' /etc/pacman.conf",
+           check=False, log=log)
     hardening.write("/etc/hosts", f"""
 127.0.0.1   localhost
 ::1         localhost

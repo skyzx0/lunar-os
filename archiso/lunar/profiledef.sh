@@ -26,4 +26,5 @@ file_permissions=(
   ["/root"]="0:0:750"
   ["/root/.zlogin"]="0:0:644"
   ["/root/.bash_profile"]="0:0:644"
+  ["/usr/local/bin/lunar-live-user"]="0:0:755"
 )

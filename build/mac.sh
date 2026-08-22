@@ -143,17 +143,45 @@ run_in_container() {
 
 cmd_test() {
     command -v qemu-system-x86_64 >/dev/null || die "brew install qemu"
-    local iso
-    iso=$(ls -t "$OUT"/*.iso 2>/dev/null | head -1) || true
-    [[ -n "${iso:-}" ]] || die "No ISO in out/. Run: build/mac.sh iso"
+    local iso=""
+    for f in "$OUT"/*.iso; do
+        [[ -f "$f" ]] && { iso="$f"; break; }
+    done
+    [[ -n "$iso" ]] || die "No ISO in out/. Run: ./build/mac.sh iso
+   Or drop a downloaded ISO into $OUT"
+    log "ISO: $(basename "$iso")"
 
     local fw_code fw_vars
-    fw_code=$(ls /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
-                 /usr/local/share/qemu/edk2-x86_64-code.fd 2>/dev/null | head -1)
-    [[ -n "$fw_code" ]] || die "UEFI firmware not found. Reinstall qemu."
+    # A bare pipeline here returns non-zero when nothing matches, and under
+    # 'set -e' that killed the script with no output at all. Search explicitly.
+    fw_code=""
+    for candidate in \
+        /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
+        /usr/local/share/qemu/edk2-x86_64-code.fd \
+        /opt/homebrew/share/qemu/edk2-x86_64-code.fd.bz2 \
+        /opt/homebrew/Cellar/qemu/*/share/qemu/edk2-x86_64-code.fd
+    do
+        [[ -f "$candidate" ]] && { fw_code="$candidate"; break; }
+    done
+    if [[ -z "$fw_code" ]]; then
+        warn "UEFI firmware not found. Looked for edk2-x86_64-code.fd under
+   /opt/homebrew/share/qemu and /usr/local/share/qemu.
+
+   See what your install has:
+     ls \$(brew --prefix qemu)/share/qemu | grep -i edk2"
+        die "Cannot boot without UEFI firmware."
+    fi
+    log "Firmware: $fw_code"
+
     fw_vars="$OUT/OVMF_VARS.fd"
-    [[ -f "$fw_vars" ]] || cp "${fw_code%code.fd}vars.fd" "$fw_vars" 2>/dev/null || \
-        qemu-img create -f raw "$fw_vars" 4M >/dev/null
+    if [[ ! -f "$fw_vars" ]]; then
+        # Some builds ship a matching vars template; a blank 4M image works too.
+        if [[ -f "${fw_code%code.fd}vars.fd" ]]; then
+            cp "${fw_code%code.fd}vars.fd" "$fw_vars"
+        else
+            qemu-img create -f raw "$fw_vars" 4M >/dev/null
+        fi
+    fi
 
     [[ -f "$OUT/test.qcow2" ]] || qemu-img create -f qcow2 "$OUT/test.qcow2" 40G
 

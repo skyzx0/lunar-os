@@ -112,8 +112,34 @@ PYEOF
     fi
 }
 
+# archiso enables units by shipping symlinks in airootfs. Creating them here
+# rather than committing symlinks keeps one auditable list of everything the
+# live medium starts, and survives checkouts on filesystems without symlinks.
+enable_live_units() {
+    local ar="$WORK/archiso/lunar/airootfs"
+    log "Enabling live medium services"
+
+    mkdir -p "$ar/etc/systemd/system/multi-user.target.wants"
+
+    # Boot to a desktop, not a console.
+    ln -sf /usr/lib/systemd/system/graphical.target "$ar/etc/systemd/system/default.target"
+    ln -sf /usr/lib/systemd/system/sddm.service     "$ar/etc/systemd/system/display-manager.service"
+
+    for unit in lunar-live-user.service NetworkManager.service; do
+        ln -sf "../$unit" "$ar/etc/systemd/system/multi-user.target.wants/$unit"
+    done
+    # NetworkManager ships in /usr/lib, not /etc; point at the real path.
+    ln -sf /usr/lib/systemd/system/NetworkManager.service \
+        "$ar/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+
+    # The root autologin that archiso puts on tty1 fights with the display
+    # manager for the console. Drop it now that the session is graphical.
+    rm -f "$ar/root/.zlogin" "$ar/root/.bash_profile"
+}
+
 cmd_iso() {
     sync_source
+    enable_live_units
     wire_local_repo
     log "Building the ISO"
     # mkarchiso wants a real Linux work directory with functioning ownership.

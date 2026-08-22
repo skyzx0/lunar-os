@@ -1,9 +1,10 @@
 
   LUNAR OS  live medium
 
-  lunar-setup            start the installer
-  lunar-setup --help     unattended and re-apply modes
+  Install Lunar OS       desktop icon, or run: sudo lunar-setup
+  Documentation          docs/ in the source tree
 
-  sshd is not installed on the live medium and the firewall drops all
-  inbound traffic.
+  This live session runs as the unprivileged user "lunar" with no
+  password. sshd is not installed and the firewall drops all inbound
+  traffic.
 
