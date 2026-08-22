@@ -8,7 +8,29 @@
 
 set -uo pipefail
 
-LOG=/tmp/lunar-setup.log
+# Per-user, because running once from the rescue console as root would
+# otherwise leave a root-owned log that the desktop session cannot write.
+LOG="${TMPDIR:-/tmp}/lunar-setup-$(id -u).log"
+
+# lunar-setup needs root. Which escalation tool exists depends on where this
+# runs: the rescue console is already root, the desktop session is not, and
+# not every image ships sudo.
+as_root() {
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    elif command -v sudo >/dev/null; then
+        sudo "$@"
+    elif command -v run0 >/dev/null; then
+        run0 "$@"
+    elif command -v pkexec >/dev/null; then
+        pkexec "$@"
+    else
+        echo "  No way to become root: sudo, run0 and pkexec are all missing." >&2
+        echo "  Switch to the rescue console with Ctrl+Alt+F2 and run:" >&2
+        echo "    lunar-setup" >&2
+        return 127
+    fi
+}
 
 # --- inner: what runs inside the terminal ---------------------------------
 
@@ -17,7 +39,7 @@ if [[ "${1:-}" == "--run" ]]; then
     printf '\033]0;Lunar OS installer\007'
 
     # Tee rather than redirect: the user watches it, and the log survives.
-    sudo lunar-setup 2>&1 | tee "$LOG"
+    as_root lunar-setup 2>&1 | tee "$LOG"
     rc=${PIPESTATUS[0]}
 
     if [[ $rc -ne 0 ]]; then
@@ -36,7 +58,8 @@ if [[ "${1:-}" == "--shell" ]]; then
 
   Lunar OS install shell.
 
-    sudo lunar-setup          start the guided installer
+    lunar-setup               start the guided installer (prefix with
+                              sudo if you are not root)
     lunar-setup --steps       print the manual commands
     lunar-diagnose            collect system state if something is wrong
 
@@ -77,7 +100,7 @@ done
 
 # No terminal at all. Say so somewhere the user will actually see it rather
 # than failing silently in a desktop session with no console attached.
-msg="No terminal emulator found. Switch to a console with Ctrl+Alt+F2 and run: sudo lunar-setup"
+msg="No terminal emulator found. Switch to a console with Ctrl+Alt+F2 and run: lunar-setup"
 if command -v kdialog >/dev/null; then
     kdialog --error "$msg"
 elif command -v zenity >/dev/null; then
