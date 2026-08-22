@@ -30,6 +30,11 @@ package() {
   done
   install -Dm755 defaults/profile.d/lunar.sh "$pkgdir/etc/profile.d/lunar.sh"
 
+  # Without a startup file zsh runs zsh-newuser-install, which greets anyone
+  # opening a terminal with a configuration wizard.
+  install -Dm644 defaults/zshrc    "$pkgdir/etc/skel/.zshrc"
+  install -Dm644 defaults/zprofile "$pkgdir/etc/skel/.zprofile"
+
   # SDDM theme
   install -d "$pkgdir/usr/share/sddm/themes/lunar"
   install -Dm644 sddm/lunar/* "$pkgdir/usr/share/sddm/themes/lunar/"

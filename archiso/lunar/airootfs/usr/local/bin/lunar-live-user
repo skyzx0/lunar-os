@@ -15,6 +15,14 @@ id lunar &>/dev/null || useradd -m -G wheel,audio,video,storage,network \
 passwd -d lunar
 passwd -d root
 
+# useradd -m copies /etc/skel at creation time. Copy again for anything that
+# landed later, and for root, whose home predates the skeleton entirely.
+for f in .zshrc .zprofile; do
+    [ -f "/etc/skel/$f" ] || continue
+    [ -f "/home/lunar/$f" ] || install -Dm644 -o lunar -g lunar "/etc/skel/$f" "/home/lunar/$f"
+    [ -f "/root/$f" ]      || install -Dm644 "/etc/skel/$f" "/root/$f"
+done
+
 install -Dm0440 /dev/stdin /etc/sudoers.d/10-lunar-live <<'SUDO'
 %wheel ALL=(ALL:ALL) NOPASSWD: ALL
 SUDO

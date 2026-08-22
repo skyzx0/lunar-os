@@ -1,0 +1,47 @@
+# Lunar OS zsh defaults.
+#
+# The presence of this file is load-bearing: without any startup file zsh runs
+# zsh-newuser-install, which drops a configuration wizard in front of anyone
+# who opens a terminal.
+
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+
+setopt HIST_IGNORE_DUPS HIST_IGNORE_SPACE HIST_REDUCE_BLANKS
+setopt SHARE_HISTORY EXTENDED_HISTORY
+setopt AUTO_CD INTERACTIVE_COMMENTS NO_BEEP
+setopt PROMPT_SUBST
+
+autoload -Uz compinit && compinit -d "${XDG_CACHE_HOME:-$HOME/.cache}/zcompdump"
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Za-z}'
+zstyle ':completion:*' list-colors ''
+
+autoload -Uz colors && colors
+
+# Prompt: a half moon, the directory, and nothing else. The moon turns red
+# when the last command failed, which is the only status worth a colour.
+PROMPT='%F{cyan}◗%f %F{white}%~%f %(?.%F{cyan}.%F{red})❯%f '
+RPROMPT='%(1j.%F{240}%j job%(2j.s.)%f.)'
+
+# Keys that people expect to work.
+bindkey -e
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+bindkey '^[[1;5C' forward-word
+bindkey '^[[1;5D' backward-word
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+
+alias ls='ls --color=auto --group-directories-first'
+alias ll='ls -lh'
+alias la='ls -lha'
+alias grep='grep --color=auto'
+alias ip='ip -color=auto'
+
+[[ -r /etc/profile.d/lunar.sh ]] && . /etc/profile.d/lunar.sh

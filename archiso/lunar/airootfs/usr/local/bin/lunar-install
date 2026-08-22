@@ -41,7 +41,19 @@ if [[ "${1:-}" == "--shell" ]]; then
     lunar-diagnose            collect system state if something is wrong
 
 MSG
-    exec "${SHELL:-/bin/bash}" -i
+    # zsh with no startup file runs zsh-newuser-install, which puts a
+    # configuration wizard in front of someone who asked for a shell. If the
+    # skeleton config is missing for any reason, fall back to bash rather
+    # than hand them that.
+    shell="${SHELL:-/bin/bash}"
+    if [[ "$(basename "$shell")" == "zsh" && ! -f "$HOME/.zshrc" ]]; then
+        if [[ -f /etc/skel/.zshrc ]]; then
+            cp /etc/skel/.zshrc "$HOME/.zshrc"
+        else
+            shell=/bin/bash
+        fi
+    fi
+    exec "$shell" -i
 fi
 
 # --- outer: find a terminal and launch the inner half ---------------------
@@ -52,7 +64,10 @@ mode="${1:---run}"
 for term in konsole foot alacritty kitty xterm; do
     command -v "$term" >/dev/null || continue
     case "$term" in
-        konsole)   exec "$term" --hide-menubar --hide-tabbar -e "$self" "$mode" ;;
+        # --nofork keeps konsole in the foreground so this process reflects
+        # the terminal's lifetime rather than exiting immediately.
+        konsole)   exec "$term" --nofork --hide-menubar --hide-tabbar \
+                        -e "$self" "$mode" ;;
         foot)      exec "$term" -e "$self" "$mode" ;;
         alacritty) exec "$term" -e "$self" "$mode" ;;
         kitty)     exec "$term" "$self" "$mode" ;;

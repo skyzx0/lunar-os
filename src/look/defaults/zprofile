@@ -1,0 +1,2 @@
+# Lunar OS zsh login shell.
+[[ -r /etc/profile ]] && emulate sh -c 'source /etc/profile'

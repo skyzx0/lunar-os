@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 try:
-    from PyQt6.QtCore import Qt, QProcess, QRectF, QSize, QTimer
+    from PyQt6.QtCore import Qt, QProcess, QRectF, QSize
     from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
     from PyQt6.QtWidgets import (
         QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
@@ -250,6 +250,12 @@ class Welcome(QWidget):
 
         root.addStretch(1)
 
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet(f"color:{ACCENT}; font-size:11px;")
+        root.addWidget(self.status)
+        root.addSpacing(8)
+
         foot = QLabel("This live session is unsigned and intended for evaluation. "
                       "Verify the ISO checksum before installing on hardware you rely on.")
         foot.setWordWrap(True)
@@ -259,45 +265,27 @@ class Welcome(QWidget):
     # ---- actions ----
 
     def _launch(self, mode: str) -> None:
-        """Hand off to lunar-install, and only close once it has started.
+        """Hand off to lunar-install and stay open.
 
-        Closing first meant a launch failure left the user with nothing on
-        screen and no indication anything had gone wrong.
+        An earlier version closed this window and tried to detect whether the
+        terminal had really started. That detection was unreliable - konsole
+        forks and exits immediately, so the pid says nothing useful - and when
+        it guessed wrong the user was left with an empty desktop. Staying open
+        removes the whole failure mode: the window is one click away if the
+        terminal did not appear, and one click to dismiss if it did.
         """
         launcher = shutil.which("lunar-install")
         if not launcher:
             self._fallback("sudo lunar-setup")
             return
 
-        ok, pid = QProcess.startDetached(launcher, [mode], os.path.expanduser("~"))
+        ok, _pid = QProcess.startDetached(launcher, [mode], os.path.expanduser("~"))
         if not ok:
             self._fallback(f"{launcher} {mode}")
             return
 
-        # Hide rather than quit: if the terminal dies immediately, bring the
-        # window back instead of leaving an empty desktop.
-        self.hide()
-        QTimer.singleShot(2500, lambda: self._confirm_running(pid))
-
-    def _confirm_running(self, pid: int) -> None:
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except ProcessLookupError:
-            alive = False
-        except PermissionError:
-            # It exists, it just is not ours to signal.
-            alive = True
-        except OSError:
-            # Cannot tell. Assume it worked rather than reappearing over a
-            # terminal the user is already typing into.
-            alive = True
-
-        if alive:
-            QApplication.quit()
-        else:
-            self.show()
-            self.raise_()
+        self.status.setText("Installer opened in a terminal window. "
+                            "Close this when you are done.")
 
     def _fallback(self, command: str) -> None:
         box = QDialog(self)
