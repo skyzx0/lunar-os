@@ -19,11 +19,35 @@ MAPPER = "lunarcrypt"
 VG = "lunar"
 
 
+class CommandFailed(RuntimeError):
+    """A failed command, carrying what the command actually said.
+
+    subprocess.CalledProcessError stringifies to the command and exit code
+    only. When stderr is captured, that means the one piece of information
+    needed to fix the problem is the piece that gets discarded.
+    """
+
+    def __init__(self, cmd, returncode, stderr, stdout=""):
+        self.cmd = cmd
+        self.returncode = returncode
+        self.stderr = (stderr or "").strip()
+        self.stdout = (stdout or "").strip()
+        detail = self.stderr or self.stdout or "(no output)"
+        super().__init__(f"{' '.join(cmd)}\n  exit {returncode}: {detail}")
+
+
 def run(cmd, check=True, input_=None, log=None):
     if log:
         log("  $ " + " ".join(cmd))
-    return subprocess.run(cmd, check=check, input=input_, text=True,
-                          capture_output=True)
+    r = subprocess.run(cmd, check=False, input=input_, text=True,
+                       capture_output=True)
+    if r.returncode != 0:
+        if log and (r.stderr or "").strip():
+            for line in r.stderr.strip().splitlines()[:6]:
+                log("    " + line)
+        if check:
+            raise CommandFailed(cmd, r.returncode, r.stderr, r.stdout)
+    return r
 
 
 def list_disks():
@@ -142,9 +166,31 @@ def make_volumes(filesystem: str, log=None, target: str = None) -> None:
 
 
 def mount_esp(esp: str, log=None) -> None:
+    # udev has to catch up with the new partition table before the device node
+    # is reliably usable; without this the mkfs can succeed and the mount that
+    # follows it fail on the same path.
+    run(["udevadm", "settle"], check=False, log=log)
+    # mount normally auto-loads the driver, but not on every kernel and not
+    # when the module is built as one that autoload does not cover.
+    run(["modprobe", "vfat"], check=False, log=log)
     run(["mkfs.fat", "-F32", "-n", "LUNARESP", esp], log=log)
+    run(["udevadm", "settle"], check=False, log=log)
     run(["mkdir", "-p", "/mnt/efi"], log=log)
-    run(["mount", "-o", "umask=0077,nodev,nosuid,noexec", esp, "/mnt/efi"], log=log)
+
+    # -t vfat explicitly: autodetection reads the superblock, and on a
+    # just-created filesystem the kernel may still have the old one cached.
+    opts = "umask=0077,nodev,nosuid,noexec"
+    r = run(["mount", "-t", "vfat", "-o", opts, esp, "/mnt/efi"],
+            check=False, log=log)
+    if r.returncode != 0:
+        # Some firmware-written ESPs reject noexec. Losing it is a small
+        # hardening loss and better than an install that cannot finish.
+        if log:
+            log("    retrying without noexec")
+        r = run(["mount", "-t", "vfat", "-o", "umask=0077,nodev,nosuid",
+                 esp, "/mnt/efi"], check=False, log=log)
+    if r.returncode != 0:
+        raise CommandFailed(["mount", esp, "/mnt/efi"], r.returncode, r.stderr)
 
 
 def luks_uuid(part: str) -> str:

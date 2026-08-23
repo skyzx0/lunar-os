@@ -1,9 +1,20 @@
+# Build output. An ISO committed by accident is 2+ GB in history that GitHub
+# will refuse to accept and that only a rewrite removes.
 out/
 work/
 repo/out/
-__pycache__/
 *.iso
 *.iso.part*
 *.qcow2
 *.fd
 SHA256SUMS
+
+# Signing material must never be committed.
+repo/signing-key.txt
+repo/packages/lunar-keyring/lunar.gpg
+*.key
+*.gpg
+!repo/packages/lunar-keyring/.gitkeep
+
+__pycache__/
+*.pyc

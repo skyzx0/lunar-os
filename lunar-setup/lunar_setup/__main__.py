@@ -10,6 +10,7 @@ import curses
 import json
 import os
 import subprocess
+import time
 import sys
 
 from . import disk, hardening, install, ui
@@ -258,19 +259,48 @@ def wizard(stdscr) -> Config:
     return cfg
 
 
+LOG_PATH = "/tmp/lunar-setup.log"
+
+
 def run_install(stdscr, cfg) -> None:
     ui.init_colors()
     s = ui.Screen(stdscr)
-    emit = s.log_view("Installing")
+    screen_log = s.log_view("Installing")
+
+    # Everything the installer prints goes to a file as well as the screen.
+    # A curses log view holds only what fits, and the line that explains a
+    # failure is usually one that has already scrolled away.
+    log_file = open(LOG_PATH, "w", buffering=1)
+
+    def emit(line: str, accent: bool = False) -> None:
+        log_file.write(line + "\n")
+        screen_log(line, accent)
+
+    emit(f"lunar-setup {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    emit(f"target {cfg.disk}   filesystem {cfg.filesystem}   "
+         f"encrypted {'yes' if cfg.encrypt else 'no'}")
+    emit(f"desktop {cfg.desktop}   profile {cfg.profile}")
+    emit("")
+
+    failed = False
     try:
         install.install(cfg, emit)
     except Exception as exc:                      # noqa: BLE001
+        failed = True
         emit("")
-        emit("Installation failed: " + str(exc), accent=True)
-        emit("A transcript is at /tmp/lunar-setup.log")
+        emit("Installation failed.", accent=True)
+        for line in str(exc).splitlines():
+            emit("  " + line)
+        emit("")
+        emit(f"The full transcript is at {LOG_PATH}")
+        emit("Reach a shell with Ctrl+Alt+F2 to read it.")
+    finally:
+        log_file.close()
+
     emit("")
     emit("press any key to exit")
     stdscr.getch()
+    return not failed
 
 
 def main() -> int:
@@ -320,9 +350,19 @@ def main() -> int:
     if cfg is None:
         print("Cancelled. Nothing was written.")
         return 1
-    curses.wrapper(run_install, cfg)
+    ok = curses.wrapper(run_install, cfg)
+
+    if not ok:
+        # Leave the target mounted. Tearing it down on failure destroys the
+        # evidence and means the next attempt starts from a half-built disk
+        # with no way to see what happened.
+        print(f"Installation failed. See {LOG_PATH}")
+        print("The target is still mounted at /mnt for inspection.")
+        print("Re-run lunaros-setup to start over; it re-partitions from scratch.")
+        return 1
 
     os.makedirs("/mnt/etc/lunar", exist_ok=True)
+    # Secrets never touch the installed system's config.
     saved = {k: v for k, v in vars(cfg).items()
              if k not in ("luks_passphrase", "user_password")}
     with open("/mnt/etc/lunar/setup.json", "w") as fh:
