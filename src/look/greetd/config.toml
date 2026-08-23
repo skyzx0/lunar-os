@@ -1,0 +1,8 @@
+# greetd with tuigreet for the tiling sessions, which have no desktop display
+# manager. The command is rewritten per install to the chosen session.
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --remember-session --asterisks --cmd Hyprland"
+user = "greeter"

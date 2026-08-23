@@ -240,6 +240,10 @@ class Welcome(QWidget):
             ("Show the manual steps",
              "Every command the installer runs, to copy and adapt yourself.",
              self.show_steps, False),
+            ("Network privacy",
+             "Randomise this machine's network identity, or read what cover "
+             "traffic does before enabling it.",
+             self.open_privacy, False),
             ("Explore the live session",
              "Close this and use Lunar OS without installing. Nothing is "
              "written to disk.",
@@ -310,6 +314,20 @@ class Welcome(QWidget):
 
     def show_steps(self):
         StepsDialog(self).exec()
+
+    def open_privacy(self):
+        # A terminal is the right surface for this: the tool is interactive and
+        # prints the cover-traffic caveat that a one-click button would bury.
+        launcher = shutil.which("lunar-install")
+        if launcher:
+            QProcess.startDetached("konsole", [
+                "--hide-menubar", "-e", "bash", "-c",
+                "lunar-privacy status; echo; "
+                "echo 'Commands: lunar-privacy spoof on|off  |  "
+                "lunar-privacy explain cover'; exec ${SHELL:-bash}"])
+            self.status.setText("Network privacy opened in a terminal.")
+        else:
+            self._fallback("lunar-privacy status")
 
 
 def main() -> int:

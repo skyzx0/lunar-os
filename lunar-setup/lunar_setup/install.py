@@ -163,6 +163,31 @@ Defaults !targetpw
     log("Applying the " + p.name + " profile", accent=True)
     hardening.apply(cfg, uuid, log=log)
 
+    # ---- network privacy toggles ---------------------------------------
+    if cfg.spoof_network:
+        log("Enabling network spoofing at boot", accent=True)
+        # A boot-time oneshot rather than baked config, so it can be turned
+        # off later with 'lunar-privacy spoof off' without editing files.
+        hardening.write("/etc/systemd/system/lunar-spoof.service", """
+[Unit]
+Description=Lunar network spoofing
+Before=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/lunar-privacy spoof on
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+""", log=log)
+        chroot("systemctl enable lunar-spoof.service", check=False, log=log)
+
+    if cfg.cover_traffic:
+        log("Enabling cover traffic", accent=True)
+        chroot("lunar-privacy cover on --rate low", check=False, log=log)
+
     # ---- initramfs + unified kernel image -------------------------------
     log("Building the unified kernel image", accent=True)
     hardening.write("/etc/mkinitcpio.conf.d/lunar.conf", """
@@ -228,6 +253,24 @@ editor no
     d = cfg.desktop_obj()
     if d.dm:
         chroot(f"systemctl enable {d.dm}", check=False, log=log)
+
+    # greetd drives the tiling sessions, which have no display manager of
+    # their own. Point tuigreet at the chosen session's launch command.
+    if d.dm == "greetd":
+        session_cmd = {"hyprland": "Hyprland", "sway": "sway",
+                       "i3": "i3"}.get(d.key, d.session)
+        greetd = (
+            "[terminal]\n"
+            "vt = 1\n\n"
+            "[default_session]\n"
+            'command = "tuigreet --time --remember --remember-session '
+            '--asterisks --cmd ' + session_cmd + '"\n'
+            "user = \"greeter\"\n"
+        )
+        hardening.write("/etc/greetd/config.toml", greetd, log=log)
+        chroot("useradd -M -G video -s /usr/bin/nologin greeter 2>/dev/null; "
+               "install -d -o greeter -g greeter /var/lib/greetd",
+               check=False, log=log)
 
     if d.dm == "sddm":
         hardening.write("/etc/sddm.conf.d/lunar.conf", """

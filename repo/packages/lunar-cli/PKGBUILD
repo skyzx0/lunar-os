@@ -1,11 +1,11 @@
 pkgname=lunar-cli
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Lunar OS command set: lum, lunarfetch"
+pkgdesc="Lunar OS command set: lum, lunarfetch, lunar-privacy"
 arch=('any')
 url="https://lunaros.org"
 license=('GPL3')
-depends=('python' 'pacman')
+depends=('python' 'pacman' 'networkmanager')
 optdepends=('pacman-contrib: pactree and paccache, used by lum tree and lum clean'
             'arch-audit: vulnerability reporting, used by lum audit'
             'btrfs-progs: snapshots before install and upgrade'
@@ -17,4 +17,5 @@ package() {
   cd "$srcdir/lunar-os/src"
   install -Dm755 lum/lum            "$pkgdir/usr/bin/lum"
   install -Dm755 fetch/lunarfetch   "$pkgdir/usr/bin/lunarfetch"
+  install -Dm755 privacy/lunar-privacy "$pkgdir/usr/bin/lunar-privacy"
 }

@@ -39,9 +39,27 @@ DESKTOPS = [
         dm="gdm",
     ),
     Desktop(
+        key="sway",
+        name="Sway",
+        blurb="Wayland tiling, i3 layout with a compositor. Middle ground "
+              "between Hyprland and bare i3.",
+        meta="lunar-desktop-sway",
+        session="sway",
+        dm="greetd",
+    ),
+    Desktop(
+        key="i3",
+        name="i3",
+        blurb="X11 tiling. The lightest graphical option with a real WM. "
+              "No compositor, no Wayland.",
+        meta="lunar-desktop-i3",
+        session="i3",
+        dm="greetd",
+    ),
+    Desktop(
         key="minimal",
         name="Minimal (TTY)",
-        blurb="No graphical stack at all. Server and headless installs.",
+        blurb="No graphical stack at all. A terminal and nothing else.",
         meta="lunar-desktop-minimal",
         session="",
         dm="",
@@ -131,6 +149,8 @@ class Config:
     keymap: str = "us"
     desktop: str = "hyprland"
     profile: str = "hardened"
+    spoof_network: bool = False       # MAC/hostname/DNS randomisation at boot
+    cover_traffic: bool = False       # decoy traffic; off, and honestly caveated
     extra_packages: list = field(default_factory=list)
 
     def desktop_obj(self) -> Desktop:

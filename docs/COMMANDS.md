@@ -68,3 +68,24 @@ errors and the graphics situation in one output.
 has documentation, forum answers and manual pages that a Lunar-specific alias
 would cut you off from. A distribution that renames standard tools makes its
 users harder to help.
+
+## lunar-privacy - network identity and cover traffic
+
+    lunar-privacy status               show current state and live MACs
+    lunar-privacy spoof on|off         randomise MAC, hostname, IPv6
+    lunar-privacy cover on|off         decoy traffic (read the caveat first)
+    lunar-privacy explain spoof|cover  what each actually does
+
+**spoof** is the real feature: per-connection MAC randomisation, a neutral
+transient hostname, and privacy-stable IPv6. Low cost, safe to leave on, and
+the main visible effect is that networks treat you as a new device each time.
+
+**cover** is offered but honestly caveated. It raises the effort for someone
+casually watching your link to tell when you are active. It does not hide which
+sites you visit, does not defeat a capable observer who sees your real traffic
+underneath, and does not make you anonymous - a machine emitting constant noise
+has its own signature. Off by default; `lunar-privacy explain cover` says so at
+length before you enable it.
+
+Both are chosen in the installer and changeable at runtime with the commands
+above.

@@ -15,7 +15,7 @@ import sys
 from . import disk, hardening, install, ui
 from .profiles import DESKTOPS, PROFILES, Config
 
-STEPS = 9
+STEPS = 10
 
 
 def step(n: int) -> str:
@@ -161,13 +161,41 @@ def wizard(stdscr) -> Config:
         return None
     cfg.profile = PROFILES[i].key
 
-    # 9 - review
+    # 9 - network privacy
+    i = s.menu("Network privacy", [
+        ("None", "No network identity randomisation."),
+        ("Spoof", "Randomise MAC, hostname and IPv6 each connection. "
+                  "Low cost, safe to leave on."),
+        ("Spoof + cover traffic", "Also generate decoy traffic. Weak against a "
+                                  "capable observer - see the note next."),
+    ], step=step(9), index=1,
+       preamble="Both are off unless chosen here, and both can be changed "
+                "later with the lunar-privacy command.")
+    if i is None:
+        return None
+    cfg.spoof_network = i >= 1
+    cfg.cover_traffic = i == 2
+
+    if cfg.cover_traffic:
+        ok = s.confirm("Cover traffic", step=step(9),
+            body="Cover traffic raises the effort for someone casually watching "
+                 "your connection to tell when you are active. It does NOT hide "
+                 "which sites you visit, does not defeat a capable observer who "
+                 "sees your real traffic underneath, and does not make you "
+                 "anonymous. A machine emitting constant noise also has its own "
+                 "recognisable signature.\n\nEnable it anyway?",
+            yes="Enable cover traffic", no="Spoof only")
+        if not ok:
+            cfg.cover_traffic = False
+
+    # 10 - review
     p = cfg.profile_obj()
+    # review is now step 10
     body = (f"Disk {cfg.disk} will be erased.\n\n"
             f"Filesystem {cfg.filesystem}    Desktop {cfg.desktop_obj().name}    "
             f"Profile {p.name}\n"
             f"Host {cfg.hostname}    User {cfg.username}    Timezone {cfg.timezone}")
-    if not s.confirm("Review", body, step=step(9),
+    if not s.confirm("Review", body, step=step(10),
                      yes="Erase " + cfg.disk + " and install"):
         return None
     return cfg

@@ -1,0 +1,11 @@
+pkgname=lunar-desktop-sway
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Sway session for Lunar OS"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('sway' 'swaybg' 'swayidle' 'swaylock' 'waybar' 'greetd'
+         'greetd-tuigreet' 'foot' 'rofi-wayland' 'mako' 'grim' 'slurp'
+         'wl-clipboard' 'xdg-desktop-portal-wlr' 'pipewire' 'pipewire-pulse'
+         'wireplumber' 'polkit-gnome' 'network-manager-applet' 'lunar-look')

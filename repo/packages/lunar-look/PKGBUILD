@@ -35,6 +35,8 @@ package() {
   install -Dm644 defaults/zshrc    "$pkgdir/etc/skel/.zshrc"
   install -Dm644 defaults/zprofile "$pkgdir/etc/skel/.zprofile"
 
+  install -Dm644 greetd/config.toml "$pkgdir/usr/share/lunar/greetd/config.toml"
+
   # SDDM theme
   install -d "$pkgdir/usr/share/sddm/themes/lunar"
   install -Dm644 sddm/lunar/* "$pkgdir/usr/share/sddm/themes/lunar/"
