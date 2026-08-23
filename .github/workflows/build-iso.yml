@@ -75,42 +75,43 @@ jobs:
           sha256sum *.iso > SHA256SUMS
           cat SHA256SUMS
           ls -lh *.iso
-          # GitHub release assets are capped at 2 GiB per file. A Plasma live
-          # medium sits close to that, so split when it would not fit and
-          # leave instructions next to the parts.
-          size=$(stat -c%s *.iso)
-          if [ "$size" -gt 2000000000 ]; then
-            echo "ISO exceeds the 2 GiB release asset limit - splitting"
-            split -b 1900M -d *.iso "$(ls *.iso).part"
-            cat > REASSEMBLE.txt <<'EOF'
-          The ISO exceeded GitHub's 2 GiB per-file release limit and was split.
-          Reassemble with:
-            cat lunar-*.iso.part* > lunar.iso
-            sha256sum -c SHA256SUMS
-          EOF
-            ls -lh *.part*
-          fi
 
-      # Artifacts count against the account's storage quota, which is small on
-      # the free plan. Kept short-lived; a release is the better home for an
-      # ISO you want to keep.
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lunar-iso
-          path: |
-            out/*.iso
-            out/SHA256SUMS
-          retention-days: 5
-          compression-level: 0    # the ISO is already compressed
-
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+      # Actions artifact storage is 500 MB on the free plan and an ISO is
+      # several times that, so uploading one exhausts the quota and then
+      # blocks every subsequent build. Releases do not count against it.
+      - name: Publish to a release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          [ "${{ github.event_name }}" = "workflow_dispatch" ] && tag="build-$(date +%Y%m%d-%H%M)"
-          gh release create "$tag" out/*.iso out/SHA256SUMS \
+          cd out
+          tag="build-$(date +%Y%m%d-%H%M)"
+          [ "${GITHUB_REF_TYPE}" = "tag" ] && tag="${GITHUB_REF_NAME}"
+
+          iso=$(ls *.iso)
+          size=$(stat -c%s "$iso")
+          assets="SHA256SUMS"
+
+          # Release assets are capped at 2 GiB each.
+          if [ "$size" -gt 2000000000 ]; then
+            echo "Splitting $iso ($((size / 1024 / 1024)) MiB) for upload"
+            split -b 1900M -d "$iso" "$iso.part"
+            assets="$assets $(ls "$iso".part*)"
+            cat > REASSEMBLE.txt <<'TXT'
+          This ISO exceeded GitHub's 2 GiB per-asset limit and was split.
+
+            cat lunar-*.iso.part* > lunar.iso
+            shasum -a 256 -c SHA256SUMS
+          TXT
+            assets="$assets REASSEMBLE.txt"
+          else
+            assets="$assets $iso"
+          fi
+
+          gh release create "$tag" $assets \
             --title "Lunar OS $tag" \
-            --notes "Unsigned CI build. Verify against SHA256SUMS. Packages in this ISO are not signed - see docs/BUILD-CI.md before trusting it with a real machine."
+            --notes "Unsigned CI build. Verify against SHA256SUMS before use.
+          Packages are not signed - see docs/BUILD-CI.md."
+
+          echo
+          echo "Download with:"
+          echo "  gh release download $tag -D ~/Downloads"

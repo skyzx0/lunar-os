@@ -25,10 +25,26 @@ Things worth knowing before you rely on it:
   workflow deletes the preinstalled .NET, Android, GHC and JVM toolchains first,
   which frees roughly 25 GiB. If a future package set grows the ISO, this is the
   step that breaks.
-- **Artifact storage.** The free plan includes 500 MB of Actions storage, and
-  the ISO is larger than that. The artifact will fail to upload or evict older
-  ones. Releases do not count against that quota, so use the release path for
-  anything you want to keep.
+- **Artifacts are not used, deliberately.** The free plan includes 500 MB of
+  Actions artifact storage and the ISO is several times that. Uploading one
+  exhausts the quota, and every later build then fails at the upload step with
+  "Artifact storage quota has been hit" - a failure that looks like a broken
+  build but is not. The workflow publishes to a **release** instead, which does
+  not count against that quota.
+
+  If you already filled the quota, delete the old artifacts:
+
+      gh api repos/:owner/:repo/actions/artifacts --paginate \
+        -q '.artifacts[] | "\(.id) \(.name) \(.size_in_bytes)"'
+
+      # then, per id:
+      gh api -X DELETE repos/:owner/:repo/actions/artifacts/<id>
+
+  Usage is recalculated every 6-12 hours, so the quota may take a while to
+  free up even after deletion.
+
+- **Release assets cap at 2 GiB each.** A Plasma ISO exceeds that, so the
+  workflow splits it and attaches a REASSEMBLE.txt alongside the parts.
 - **Private repositories consume minutes.** 2000 per month on the free plan;
   each build is about 25. Public repositories are unmetered.
 - **Timeout.** Set to 120 minutes. A normal build is well inside that.
