@@ -1,0 +1,8 @@
+pkgname=lunar-desktop-minimal
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Headless Lunar OS"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('tmux' 'openssh' 'fail2ban')

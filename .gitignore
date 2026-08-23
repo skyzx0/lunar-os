@@ -1,0 +1,9 @@
+out/
+work/
+repo/out/
+__pycache__/
+*.iso
+*.iso.part*
+*.qcow2
+*.fd
+SHA256SUMS

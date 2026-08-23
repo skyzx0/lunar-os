@@ -1,0 +1,7 @@
+[Daemon]
+Timeout=10
+LockGrace=0
+LockOnResume=true
+
+[Greeter]
+Theme=org.lunaros.desktop

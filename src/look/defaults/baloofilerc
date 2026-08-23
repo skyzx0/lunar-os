@@ -1,0 +1,4 @@
+[Basic Settings]
+# The file indexer costs 150-250 MB resident and continuous I/O. Off by
+# default; turn it on in System Settings if you want desktop search.
+Indexing-Enabled=false

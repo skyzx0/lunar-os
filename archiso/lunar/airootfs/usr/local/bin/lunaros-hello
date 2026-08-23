@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Shown in a terminal when the desktop session starts. Not a graphical
+# installer: the installer is a terminal program, and wrapping it in a window
+# that only launches another terminal added a failure point and no value.
+clear
+cat <<'MSG'
+
+  LUNAR OS
+
+  To install:      lunaros-setup
+  Minimal install: lunaros-setup --fast
+  By hand:         lunaros-setup --steps
+
+  Packages:        ltxs -h
+  System summary:  lunarfetch
+  Network privacy: lunar-privacy status
+
+  Nothing has been written to disk.
+
+MSG
+exec "${SHELL:-/bin/zsh}" -i

@@ -1,0 +1,110 @@
+# Lunar OS boot splash.
+#
+# Black field, a half moon centred, three dots below that cycle while the
+# system starts. No progress bar: on an encrypted system most of the boot is
+# spent waiting for a passphrase, and a bar that sits still reads as a hang.
+
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+screen_width  = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+# Scale the moon to the display rather than assuming 1080p.
+moon.image  = Image("moon.png");
+moon_scale  = screen_height / 1080;
+if (moon_scale < 0.5) moon_scale = 0.5;
+if (moon_scale > 2.0) moon_scale = 2.0;
+
+moon.scaled = moon.image.Scale(moon.image.GetWidth()  * moon_scale,
+                               moon.image.GetHeight() * moon_scale);
+moon.sprite = Sprite(moon.scaled);
+moon.sprite.SetX(screen_width  / 2 - moon.scaled.GetWidth()  / 2);
+moon.sprite.SetY(screen_height / 2 - moon.scaled.GetHeight() / 2 - screen_height * 0.04);
+moon.sprite.SetZ(10);
+
+# --- progress dots --------------------------------------------------------
+
+dot_count   = 3;
+dot_spacing = 22 * moon_scale;
+dot_y       = screen_height / 2 + moon.scaled.GetHeight() / 2 + screen_height * 0.05;
+
+for (i = 0; i < dot_count; i++) {
+    dots[i].image  = Image("dot-0.png").Scale(10 * moon_scale, 10 * moon_scale);
+    dots[i].sprite = Sprite(dots[i].image);
+    dots[i].sprite.SetX(screen_width / 2
+                        - (dot_count - 1) * dot_spacing / 2
+                        + i * dot_spacing);
+    dots[i].sprite.SetY(dot_y);
+    dots[i].sprite.SetZ(10);
+    dots[i].sprite.SetOpacity(0.25);
+}
+
+tick = 0;
+
+fun refresh_callback() {
+    tick++;
+    active = Math.Int(tick / 12) % dot_count;
+    for (i = 0; i < dot_count; i++) {
+        if (i == active)
+            dots[i].sprite.SetOpacity(1.0);
+        else
+            dots[i].sprite.SetOpacity(0.25);
+    }
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# --- passphrase prompt ----------------------------------------------------
+# The disk is encrypted, so this is the screen most boots actually stop on.
+# It has to be legible and obviously waiting for input.
+
+prompt_sprite  = Sprite();
+bullets_sprite = Sprite();
+
+fun display_password_callback(prompt, bullets) {
+    moon.sprite.SetOpacity(1.0);
+
+    prompt_image = Image.Text("Enter passphrase to unlock", 0.85, 0.87, 0.92, 1, "Sans 12");
+    prompt_sprite.SetImage(prompt_image);
+    prompt_sprite.SetX(screen_width / 2 - prompt_image.GetWidth() / 2);
+    prompt_sprite.SetY(dot_y + 10);
+    prompt_sprite.SetZ(20);
+
+    dot_string = "";
+    for (i = 0; i < bullets; i++) dot_string += "*";
+    bullets_image = Image.Text(dot_string, 0.85, 0.87, 0.92, 1, "Sans 14");
+    bullets_sprite.SetImage(bullets_image);
+    bullets_sprite.SetX(screen_width / 2 - bullets_image.GetWidth() / 2);
+    bullets_sprite.SetY(dot_y + 40);
+    bullets_sprite.SetZ(20);
+
+    for (i = 0; i < dot_count; i++) dots[i].sprite.SetOpacity(0);
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+fun display_normal_callback() {
+    prompt_sprite.SetImage(Image.Text("", 0, 0, 0));
+    bullets_sprite.SetImage(Image.Text("", 0, 0, 0));
+    for (i = 0; i < dot_count; i++) dots[i].sprite.SetOpacity(0.25);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+# --- messages -------------------------------------------------------------
+# Errors must be visible. A splash that hides a failed fsck is worse than no
+# splash at all.
+
+message_sprite = Sprite();
+message_sprite.SetPosition(screen_width * 0.5, screen_height * 0.92, 30);
+
+fun message_callback(text) {
+    image = Image.Text(text, 0.6, 0.62, 0.68, 1, "Sans 9");
+    message_sprite.SetImage(image);
+    message_sprite.SetX(screen_width / 2 - image.GetWidth() / 2);
+}
+Plymouth.SetMessageFunction(message_callback);
+
+fun quit_callback() {
+    moon.sprite.SetOpacity(0);
+    for (i = 0; i < dot_count; i++) dots[i].sprite.SetOpacity(0);
+}
+Plymouth.SetQuitFunction(quit_callback);

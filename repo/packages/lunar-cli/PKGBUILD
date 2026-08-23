@@ -1,0 +1,21 @@
+pkgname=lunar-cli
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lunar OS command set: ltxs, lunarfetch, lunar-privacy"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('python' 'pacman' 'networkmanager')
+optdepends=('pacman-contrib: helpers used by ltxs -t and ltxs -c'
+            'arch-audit: vulnerability data, used by ltxs -a'
+            'btrfs-progs: snapshots before install and upgrade'
+            'pciutils: GPU detection in lunarfetch')
+source=("lunar-os-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/lunar-os/src"
+  install -Dm755 ltxs/ltxs          "$pkgdir/usr/bin/ltxs"
+  install -Dm755 fetch/lunarfetch   "$pkgdir/usr/bin/lunarfetch"
+  install -Dm755 privacy/lunar-privacy "$pkgdir/usr/bin/lunar-privacy"
+}

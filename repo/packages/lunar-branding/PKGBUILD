@@ -1,0 +1,24 @@
+pkgname=lunar-branding
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lunar OS boot splash, icons and identity files"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('plymouth')
+source=("lunar-os-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/lunar-os/branding"
+
+  install -d "$pkgdir/usr/share/plymouth/themes/lunar"
+  install -Dm644 plymouth/lunar/* "$pkgdir/usr/share/plymouth/themes/lunar/"
+
+  # Hicolor icon so LOGO=lunar in os-release resolves instead of falling back
+  # to a generic placeholder in the desktop and in bug reporting tools.
+  install -Dm644 plymouth/lunar/moon.png \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/lunar.png"
+  install -Dm644 plymouth/lunar/moon-small.png \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/lunar.png"
+}

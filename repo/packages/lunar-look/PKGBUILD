@@ -1,0 +1,50 @@
+pkgname=lunar-look
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lunar OS desktop appearance: colour scheme, panel layout, login theme"
+arch=('any')
+url="https://lunaros.org"
+license=('GPL3')
+depends=('breeze' 'breeze-icons')
+optdepends=('sddm: login theme'
+            'konsole: terminal profile'
+            'noto-fonts: the fonts the defaults reference')
+source=("lunar-os-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/lunar-os/src/look"
+
+  install -Dm644 color-schemes/Lunar.colors \
+    "$pkgdir/usr/share/color-schemes/Lunar.colors"
+
+  install -Dm644 konsole/Lunar.colorscheme "$pkgdir/usr/share/konsole/Lunar.colorscheme"
+  install -Dm644 konsole/Lunar.profile     "$pkgdir/usr/share/konsole/Lunar.profile"
+
+  # Defaults land in /etc/skel so a new account picks them up once, and can
+  # then change anything. Shipping them as enforced system config would mean
+  # every System Settings change silently reverts on upgrade.
+  install -d "$pkgdir/etc/skel/.config"
+  for f in kdeglobals kwinrc plasmarc baloofilerc kscreenlockerrc; do
+    install -Dm644 "defaults/$f" "$pkgdir/etc/skel/.config/$f"
+  done
+  install -Dm755 defaults/profile.d/lunar.sh "$pkgdir/etc/profile.d/lunar.sh"
+
+  # Without a startup file zsh runs zsh-newuser-install, which greets anyone
+  # opening a terminal with a configuration wizard.
+  install -Dm644 defaults/zshrc    "$pkgdir/etc/skel/.zshrc"
+  install -Dm644 defaults/zprofile "$pkgdir/etc/skel/.zprofile"
+
+  install -Dm644 greetd/config.toml "$pkgdir/usr/share/lunar/greetd/config.toml"
+
+  # SDDM theme
+  install -d "$pkgdir/usr/share/sddm/themes/lunar"
+  install -Dm644 sddm/lunar/* "$pkgdir/usr/share/sddm/themes/lunar/"
+
+  # Plasma look-and-feel package and standalone layout script
+  find plasma/look-and-feel -type f | while read -r f; do
+    install -Dm644 "$f" "$pkgdir/usr/share/plasma/${f#plasma/}"
+  done
+  install -Dm644 plasma/layout/org.lunaros.desktop.js \
+    "$pkgdir/usr/share/lunar/layout/org.lunaros.desktop.js"
+}

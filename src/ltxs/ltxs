@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""ltxs - Lunar package command.
+
+    sudo ltxs -l firefox            install
+    sudo ltxs -l -s firefox         install, then sync databases after
+    sudo ltxs -ls firefox           the same, combined
+    sudo ltxs -r firefox            remove, with its unused dependencies
+    sudo ltxs -u                    upgrade everything
+    sudo ltxs -s                    sync databases only
+
+    ltxs -f term                    find packages
+    ltxs -q firefox                 query one package
+    ltxs -w firefox                 why is it installed
+    ltxs -t firefox                 dependency tree
+    ltxs -a                         audit for known vulnerabilities
+    ltxs -o                         orphaned packages
+    ltxs -b                         biggest packages on disk
+    sudo ltxs -c                    clean the package cache
+    ltxs -k                         check installed files against packages
+    ltxs -R                         list rollback points
+
+Flags combine where it makes sense: -ls, -lsy, -ru.
+Add -y to skip confirmation, -v for verbose.
+"""
+
+import argparse
+import os
+import random
+import shutil
+import subprocess
+import sys
+import time
+
+RESET = "\033[0m"; DIM = "\033[2m"; BOLD = "\033[1m"
+MOON = "\033[36m"; WARN = "\033[33m"; BAD = "\033[31m"; OK = "\033[32m"
+
+SNAPSHOT_DIR = "/.snapshots"
+KEEP_SNAPSHOTS = 5
+
+# Removing these leaves a machine that will not boot or will not decrypt.
+# The package tool will do it if forced, but not by accident.
+CRITICAL = {
+    "linux-hardened", "linux-lts", "systemd", "glibc", "bash", "pacman",
+    "cryptsetup", "lvm2", "mkinitcpio", "systemd-libs", "filesystem",
+    "lunar-hardening", "lunar-cli", "coreutils", "util-linux",
+}
+
+
+def c(text, colour):
+    return text if not sys.stdout.isatty() else f"{colour}{text}{RESET}"
+
+
+def need_root(what: str):
+    if os.geteuid() != 0:
+        sys.exit(f"  {what} needs root. Try: sudo ltxs {' '.join(sys.argv[1:])}")
+
+
+def backend(*args, check=False):
+    """The package backend. Not user-facing; ltxs is the interface."""
+    return subprocess.run(["pacman", *args], check=check).returncode
+
+
+def query(*args) -> str:
+    return subprocess.run(["pacman", *args], capture_output=True, text=True).stdout
+
+
+# --------------------------------------------------------------------------
+
+
+def btrfs_root() -> bool:
+    out = subprocess.run(["findmnt", "-no", "FSTYPE", "/"],
+                         capture_output=True, text=True).stdout.strip()
+    return out == "btrfs"
+
+
+def snapshot(tag: str):
+    """Snapshot before a change, so a bad upgrade is a reboot, not a reinstall."""
+    if not btrfs_root() or os.geteuid() != 0:
+        return None
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    name = f"{SNAPSHOT_DIR}/{tag}-{time.strftime('%Y%m%d-%H%M%S')}"
+    r = subprocess.run(["btrfs", "subvolume", "snapshot", "-r", "/", name],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    print(c(f"  snapshot {os.path.basename(name)}", DIM))
+    snaps = sorted(os.listdir(SNAPSHOT_DIR))
+    for old in snaps[:-KEEP_SNAPSHOTS]:
+        subprocess.run(["btrfs", "subvolume", "delete", f"{SNAPSHOT_DIR}/{old}"],
+                       capture_output=True)
+    return name
+
+
+# --------------------------------------------------------------------------
+# actions
+
+
+def do_sync(args) -> int:
+    need_root("sync")
+    print(c("Refreshing package databases", MOON))
+    return backend("-Sy")
+
+
+def do_install(args) -> int:
+    need_root("install")
+    if not args.packages:
+        print(c("  nothing to install: give one or more package names", BAD))
+        return 1
+
+    missing = [p for p in args.packages
+               if subprocess.run(["pacman", "-Si", p], capture_output=True).returncode != 0]
+    if missing:
+        print(c(f"  not found: {' '.join(missing)}", BAD))
+        print(c(f"  try: ltxs -f {missing[0]}", DIM))
+        return 1
+
+    snapshot("install")
+    flags = ["-S", "--needed"]
+    if args.yes:
+        flags.append("--noconfirm")
+    return backend(*flags, *args.packages)
+
+
+def do_remove(args) -> int:
+    need_root("remove")
+    if not args.packages:
+        print(c("  nothing to remove", BAD))
+        return 1
+
+    hit = CRITICAL.intersection(args.packages)
+    if hit and not args.force:
+        print(c(f"  refusing: {', '.join(sorted(hit))}", BAD))
+        print("  These are part of the boot or decryption path. Removing them")
+        print("  gives a system that will not start, and you find out at the")
+        print("  next reboot.")
+        print(c("  Override with --force if you know why.", DIM))
+        return 1
+
+    snapshot("remove")
+    flags = ["-Rns"]
+    if args.yes:
+        flags.append("--noconfirm")
+    return backend(*flags, *args.packages)
+
+
+def do_upgrade(args) -> int:
+    need_root("upgrade")
+    print(c("Checking for updates", MOON))
+    pending = query("-Qu").strip()
+    if not pending:
+        print(c("  everything is current", OK))
+        return 0
+
+    for line in pending.splitlines():
+        print("  " + line)
+    print()
+
+    if any(l.startswith(("linux-", "systemd ")) for l in pending.splitlines()):
+        print(c("  this touches the kernel or init - a snapshot will be taken", WARN))
+        print()
+
+    if not args.yes:
+        try:
+            if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+                return 1
+        except (EOFError, KeyboardInterrupt):
+            return 1
+
+    snapshot("upgrade")
+    rc = backend("-Su", "--noconfirm" if args.yes else "--confirm")
+    if rc == 0 and shutil.which("arch-audit"):
+        print(c("\nVulnerability check after upgrade", MOON))
+        subprocess.run(["arch-audit", "-u"])
+    return rc
+
+
+def do_find(args) -> int:
+    if not args.packages:
+        print(c("  give a search term", BAD))
+        return 1
+    out = query("-Ss", args.packages[0])
+    if not out.strip():
+        print("  nothing found")
+        return 1
+    installed = {l.split()[0] for l in query("-Q").splitlines()}
+    for block in out.split("\n\n"):
+        if not block.strip():
+            continue
+        head, _, body = block.partition("\n")
+        name = head.split("/")[-1].split()[0] if "/" in head else head.split()[0]
+        print(c(head, BOLD) + (c("  [installed]", OK) if name in installed else ""))
+        if body:
+            print(c(body.rstrip(), DIM))
+    return 0
+
+
+def do_query(args) -> int:
+    if not args.packages:
+        print(query("-Q").rstrip())
+        return 0
+    info = query("-Qi", args.packages[0]) or query("-Si", args.packages[0])
+    if not info.strip():
+        print(c(f"  no package named {args.packages[0]}", BAD))
+        return 1
+    print(info.rstrip())
+    return 0
+
+
+def do_why(args) -> int:
+    if not args.packages:
+        print(c("  name a package", BAD))
+        return 1
+    pkg = args.packages[0]
+    info = query("-Qi", pkg)
+    if not info.strip():
+        print(c(f"  {pkg} is not installed", BAD))
+        return 1
+    reason = next((l.split(":", 1)[1].strip() for l in info.splitlines()
+                   if l.startswith("Install Reason")), "")
+    required = next((l.split(":", 1)[1].strip() for l in info.splitlines()
+                     if l.startswith("Required By")), "None")
+    print(f"  {pkg} was installed "
+          + ("deliberately." if "Explicitly" in reason else "as a dependency."))
+    if required != "None":
+        print(f"  Needed by: {required}")
+    else:
+        print(c("  Nothing depends on it now - see: ltxs -o", DIM))
+    return 0
+
+
+def do_tree(args) -> int:
+    if not args.packages:
+        print(c("  name a package", BAD))
+        return 1
+    if not shutil.which("pactree"):
+        print(c("  missing helper: sudo ltxs -l pacman-contrib", WARN))
+        return 1
+    return subprocess.run(["pactree", "-d", "2", args.packages[0]]).returncode
+
+
+def do_audit(args) -> int:
+    if not shutil.which("arch-audit"):
+        print(c("  missing helper: sudo ltxs -l arch-audit", WARN))
+        return 1
+    print(c("Packages with known vulnerabilities", MOON))
+    if subprocess.run(["arch-audit", "-uf", "%n %c %t"]).returncode != 0:
+        print(c("  none affecting this system", OK))
+    return 0
+
+
+def do_orphans(args) -> int:
+    out = query("-Qtdq").split()
+    if not out:
+        print(c("  no orphans", OK))
+        return 0
+    print(c(f"{len(out)} packages nothing depends on:", MOON))
+    for p in out:
+        print("  " + p)
+    print(c("\n  remove them: sudo ltxs -r " + " ".join(out), DIM))
+    return 0
+
+
+def do_big(args) -> int:
+    rows, name = [], None
+    for line in query("-Qi").splitlines():
+        if line.startswith("Name "):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Installed Size") and name:
+            raw = line.split(":", 1)[1].strip()
+            try:
+                value, unit = raw.split()
+                mult = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3}
+                rows.append((float(value.replace(",", ".")) * mult.get(unit, 1), name))
+            except ValueError:
+                pass
+            name = None
+    rows.sort(reverse=True)
+    total = sum(s for s, _ in rows)
+    print(c(f"Largest packages  ({total / 1024**3:.1f} GiB installed)", MOON))
+    for s, n in rows[:25]:
+        print(f"  {s / 1024**2:>8.1f} MiB  {n}")
+    return 0
+
+
+def do_clean(args) -> int:
+    need_root("clean")
+    if shutil.which("paccache"):
+        return subprocess.run(["paccache", "-rk2"]).returncode
+    return backend("-Sc")
+
+
+def do_check(args) -> int:
+    print(c("Checking installed files against their packages", MOON))
+    print(c("  this reads every file and takes a while", DIM))
+    r = subprocess.run(["pacman", "-Qkk"], capture_output=True, text=True)
+    problems = [l for l in (r.stdout + r.stderr).splitlines()
+                if "warning" in l or "error" in l]
+    if not problems:
+        print(c("  no discrepancies", OK))
+        return 0
+    for p in problems:
+        print(c("  " + p, WARN))
+    print(c(f"\n  {len(problems)} files differ. Modified config is normal; "
+            "modified binaries are not.", WARN))
+    return 1
+
+
+def do_rollback(args) -> int:
+    if not os.path.isdir(SNAPSHOT_DIR):
+        print(c("  no snapshots on this system", BAD))
+        return 1
+    snaps = sorted(os.listdir(SNAPSHOT_DIR), reverse=True)
+    if not snaps:
+        print(c("  no snapshots taken yet", BAD))
+        return 1
+    print(c("Rollback points", MOON))
+    for i, s in enumerate(snaps):
+        print(f"  {i}  {s}")
+    print()
+    print("  Restoring replaces the running root and needs a reboot. From the")
+    print("  live medium:")
+    print(c("    mount -o subvol=/ /dev/lunar/root /mnt", DIM))
+    print(c("    mv /mnt/@ /mnt/@broken", DIM))
+    print(c(f"    btrfs subvolume snapshot /mnt/.snapshots/{snaps[0]} /mnt/@", DIM))
+    print()
+    print("  Doing it from the running system would pull the filesystem out")
+    print("  from under the process doing it.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="ltxs", add_help=False,
+        description="Lunar package command",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__.split("\n", 2)[2])
+
+    ap.add_argument("-l", "--install", action="store_true")
+    ap.add_argument("-s", "--sync", action="store_true")
+    ap.add_argument("-r", "--remove", action="store_true")
+    ap.add_argument("-u", "--upgrade", action="store_true")
+    ap.add_argument("-f", "--find", action="store_true")
+    ap.add_argument("-q", "--query", action="store_true")
+    ap.add_argument("-w", "--why", action="store_true")
+    ap.add_argument("-t", "--tree", action="store_true")
+    ap.add_argument("-a", "--audit", action="store_true")
+    ap.add_argument("-o", "--orphans", action="store_true")
+    ap.add_argument("-b", "--big", action="store_true")
+    ap.add_argument("-c", "--clean", action="store_true")
+    ap.add_argument("-k", "--check", action="store_true")
+    ap.add_argument("-R", "--rollback", action="store_true")
+    ap.add_argument("-y", "--yes", action="store_true")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("packages", nargs="*")
+
+    args = ap.parse_args()
+
+    if args.help or not any((args.install, args.sync, args.remove, args.upgrade,
+                             args.find, args.query, args.why, args.tree,
+                             args.audit, args.orphans, args.big, args.clean,
+                             args.check, args.rollback)):
+        ap.print_help()
+        return 0
+
+    # -s alone syncs. -s with -l syncs afterwards, as documented.
+    sync_first = args.sync and not args.install
+
+    rc = 0
+    if sync_first:
+        rc = do_sync(args)
+        if rc != 0 or not any((args.install, args.remove, args.upgrade)):
+            return rc
+
+    for flag, fn in (
+        (args.install, do_install), (args.remove, do_remove),
+        (args.upgrade, do_upgrade), (args.find, do_find),
+        (args.query, do_query), (args.why, do_why), (args.tree, do_tree),
+        (args.audit, do_audit), (args.orphans, do_orphans),
+        (args.big, do_big), (args.clean, do_clean), (args.check, do_check),
+        (args.rollback, do_rollback),
+    ):
+        if flag:
+            rc = fn(args)
+            if rc != 0:
+                return rc
+
+    # -l -s : sync after installing, which is the documented order.
+    if args.install and args.sync:
+        rc = do_sync(args)
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
