@@ -262,44 +262,56 @@ def wizard(stdscr) -> Config:
 LOG_PATH = "/tmp/lunar-setup.log"
 
 
-def run_install(stdscr, cfg) -> None:
+def run_install(stdscr, cfg) -> bool:
+    """Run the installation. Returns True on success.
+
+    The log file stays open for the whole function and is closed by the
+    context manager on the way out, after the last emit. Closing it in a
+    finally block and then emitting again - which is what an earlier version
+    did - crashes on a closed file and buries whatever the real failure was.
+    """
     ui.init_colors()
     s = ui.Screen(stdscr)
     screen_log = s.log_view("Installing")
 
+    failed = False
+
     # Everything the installer prints goes to a file as well as the screen.
     # A curses log view holds only what fits, and the line that explains a
-    # failure is usually one that has already scrolled away.
-    log_file = open(LOG_PATH, "w", buffering=1)
+    # failure is usually the one that has already scrolled away.
+    with open(LOG_PATH, "w", buffering=1) as log_file:
 
-    def emit(line: str, accent: bool = False) -> None:
-        log_file.write(line + "\n")
-        screen_log(line, accent)
+        def emit(line: str, accent: bool = False) -> None:
+            # The screen is the thing the user is looking at; never let a
+            # logging problem take the installer down with it.
+            try:
+                log_file.write(line + "\n")
+            except (ValueError, OSError):
+                pass
+            screen_log(line, accent)
 
-    emit(f"lunar-setup {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    emit(f"target {cfg.disk}   filesystem {cfg.filesystem}   "
-         f"encrypted {'yes' if cfg.encrypt else 'no'}")
-    emit(f"desktop {cfg.desktop}   profile {cfg.profile}")
-    emit("")
-
-    failed = False
-    try:
-        install.install(cfg, emit)
-    except Exception as exc:                      # noqa: BLE001
-        failed = True
+        emit(f"lunaros-setup {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        emit(f"target {cfg.disk}   filesystem {cfg.filesystem}   "
+             f"encrypted {'yes' if cfg.encrypt else 'no'}")
+        emit(f"desktop {cfg.desktop}   profile {cfg.profile}")
         emit("")
-        emit("Installation failed.", accent=True)
-        for line in str(exc).splitlines():
-            emit("  " + line)
-        emit("")
-        emit(f"The full transcript is at {LOG_PATH}")
-        emit("Reach a shell with Ctrl+Alt+F2 to read it.")
-    finally:
-        log_file.close()
 
-    emit("")
-    emit("press any key to exit")
-    stdscr.getch()
+        try:
+            install.install(cfg, emit)
+        except Exception as exc:                      # noqa: BLE001
+            failed = True
+            emit("")
+            emit("Installation failed.", accent=True)
+            for line in str(exc).splitlines():
+                emit("  " + line)
+            emit("")
+            emit(f"The full transcript is at {LOG_PATH}")
+            emit("Reach a shell with Ctrl+Alt+F2 to read it.")
+
+        emit("")
+        emit("press any key to exit")
+        stdscr.getch()
+
     return not failed
 
 

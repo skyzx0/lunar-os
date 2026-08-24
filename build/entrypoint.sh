@@ -208,6 +208,11 @@ cmd_check() {
     shellcheck "$WORK/repo/build-repo.sh" "$WORK/build/entrypoint.sh" || true
     log "PKGBUILD lint"
     for p in "$WORK"/repo/packages/*/PKGBUILD; do namcap "$p" || true; done
+    log "Installer smoke test"
+    # These paths broke twice on real hardware for reasons a single run would
+    # have caught. Run them here instead.
+    cd "$WORK" && python tests/test_installer.py
+
     log "Package set sanity check"
     cd "$WORK/lunar-setup" && python -c "
 from lunar_setup.profiles import Config, PROFILES, DESKTOPS
