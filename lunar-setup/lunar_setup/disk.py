@@ -38,11 +38,27 @@ class CommandFailed(RuntimeError):
         super().__init__(f"{' '.join(cmd)}\n  exit {returncode}: {detail}")
 
 
-def run(cmd, check=True, input_=None, log=None):
+def run(cmd, check=True, input_=None, log=None, timeout=None):
+    """Run a command with its output captured and its input closed.
+
+    stdin is /dev/null unless something is explicitly passed. With output
+    captured, any command that decides to prompt - LVM asking whether to wipe
+    a signature it found, fsck asking to repair - writes the question into a
+    pipe nobody can see and then waits forever for an answer. Closing stdin
+    turns that silent hang into an immediate, visible failure.
+    """
     if log:
         log("  $ " + " ".join(cmd))
-    r = subprocess.run(cmd, check=False, input=input_, text=True,
-                       capture_output=True)
+    try:
+        r = subprocess.run(cmd, check=False,
+                           input=input_,
+                           stdin=None if input_ is not None else subprocess.DEVNULL,
+                           text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # With stdin closed a prompt cannot hang us, but a device that stops
+        # responding still can. Report it rather than sitting there.
+        raise CommandFailed(cmd, -1,
+                            f"timed out after {timeout}s with no output") from None
     if r.returncode != 0:
         if log and (r.stderr or "").strip():
             for line in r.stderr.strip().splitlines()[:6]:
@@ -178,8 +194,19 @@ def partition(disk: str, log=None) -> tuple:
          "-n", "2:0:0", "-t", "2:8309", "-c", "2:LUNAR_LUKS",
          disk], log=log)
     run(["partprobe", disk], check=False, log=log)
+    run(["udevadm", "settle"], check=False, log=log)
+
     suffix = "p" if disk[-1].isdigit() else ""
-    return f"{disk}{suffix}1", f"{disk}{suffix}2"
+    esp, data = f"{disk}{suffix}1", f"{disk}{suffix}2"
+
+    # sgdisk rewrites the partition table, not the partition contents. A
+    # previous attempt's LVM and filesystem signatures survive in the same
+    # place, and every later tool then stops to ask whether to overwrite them.
+    for part in (esp, data):
+        run(["wipefs", "-a", part], check=False, log=log)
+    run(["udevadm", "settle"], check=False, log=log)
+
+    return esp, data
 
 
 def secure_erase(part: str, log=None) -> None:
@@ -221,9 +248,14 @@ def make_volumes(filesystem: str, log=None, target: str = None) -> None:
     swap_gib = max(2, min(16, round(memory_bytes() / 1024**3)))
 
     run(["pvcreate", "-ff", "-y", target], log=log)
-    run(["vgcreate", VG, target], log=log)
-    run(["lvcreate", "-L", f"{swap_gib}G", "-n", "swap", VG], log=log)
-    run(["lvcreate", "-l", "100%FREE", "-n", "root", VG], log=log)
+    run(["vgcreate", "-y", VG, target], log=log)
+    # -y answers the "wipe the signature I found?" prompt that a previous
+    # attempt's filesystem leaves behind. -Zy zeroes the start of the volume
+    # so the next tool does not find that signature either.
+    run(["lvcreate", "-y", "-Zy", "-W", "y", "-L", f"{swap_gib}G",
+         "-n", "swap", VG], log=log)
+    run(["lvcreate", "-y", "-Zy", "-W", "y", "-l", "100%FREE",
+         "-n", "root", VG], log=log)
 
     root = f"/dev/{VG}/root"
     if filesystem == "btrfs":

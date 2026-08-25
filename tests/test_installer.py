@@ -112,3 +112,24 @@ assert _disk.memory_bytes() > 0
 _disk.list_disks()          # must not raise on any machine
 
 print("disk helpers import and run")
+
+
+# --- no command may block on input -----------------------------------------
+# An installer that captures output and leaves stdin open turns any prompt
+# into a silent, permanent hang. This happened once, at lvcreate, and cost a
+# rebuild to diagnose.
+
+import time as _time
+from lunar_setup.disk import CommandFailed as _Failed
+
+_start = _time.time()
+_disk.run(["sh", "-c", "read x"], check=False)
+assert _time.time() - _start < 5, "run() hung: stdin is not closed"
+
+try:
+    _disk.run(["sleep", "10"], timeout=2)
+    raise AssertionError("timeout not enforced")
+except _Failed as exc:
+    assert "timed out" in str(exc)
+
+print("run() cannot hang on input, and reports timeouts")
