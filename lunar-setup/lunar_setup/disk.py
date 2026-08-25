@@ -12,7 +12,9 @@ microcode are baked into one PE binary and signed, so nothing outside the
 LUKS container is both unsigned and load-bearing.
 """
 
+import glob
 import json
+import os
 import subprocess
 
 MAPPER = "lunarcrypt"
@@ -82,8 +84,93 @@ def memory_bytes() -> int:
     return 8 * 1024**3
 
 
+def release_disk(disk: str, log=None) -> None:
+    """Free a disk still held from an earlier attempt.
+
+    A failed install leaves the target mounted, its volume group active and
+    its swap enabled - deliberately, so the state can be inspected. All of
+    that keeps the kernel holding the device, and the next run then fails at
+    the first command with "Device or resource busy", which names neither the
+    holder nor the fix.
+
+    Everything here is best-effort: on a first install there is nothing to
+    release and every call is a no-op.
+    """
+    base = os.path.basename(disk)
+
+    # Swap on the target keeps its logical volume open.
+    run(["swapoff", "-a"], check=False, log=log)
+
+    # An earlier run may have left the new root mounted.
+    subprocess.run(["umount", "-R", "/mnt"], capture_output=True, text=True)
+
+    # Deactivate volume groups whose physical volumes live on this disk. Only
+    # this disk: deactivating everything would take out the running system if
+    # the installer is ever run from an installed one.
+    pvs = subprocess.run(["pvs", "--noheadings", "-o", "pv_name,vg_name"],
+                         capture_output=True, text=True).stdout
+    for line in pvs.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0].startswith(disk):
+            if log:
+                log(f"  releasing volume group {fields[1]}")
+            run(["vgchange", "-an", fields[1]], check=False, log=log)
+
+    # Close device-mapper devices stacked on this disk: LUKS containers from
+    # a previous encrypted attempt, and any leftover LVM mappings.
+    for entry in sorted(glob.glob(f"/sys/class/block/{base}*")):
+        holders = os.path.join(entry, "holders")
+        if not os.path.isdir(holders):
+            continue
+        for holder in os.listdir(holders):
+            name_file = f"/sys/class/block/{holder}/dm/name"
+            try:
+                with open(name_file) as fh:
+                    name = fh.read().strip()
+            except OSError:
+                continue
+            if log:
+                log(f"  releasing mapping {name}")
+            run(["cryptsetup", "close", name], check=False)
+            run(["dmsetup", "remove", "--force", name], check=False)
+
+    run(["udevadm", "settle"], check=False, log=log)
+
+
+def disk_is_busy(disk: str) -> str:
+    """Return a description of what still holds the disk, or an empty string."""
+    base = os.path.basename(disk)
+    holders = []
+    for entry in sorted(glob.glob(f"/sys/class/block/{base}*")):
+        hdir = os.path.join(entry, "holders")
+        if os.path.isdir(hdir):
+            holders += os.listdir(hdir)
+
+    mounted = subprocess.run(["findmnt", "-rno", "SOURCE,TARGET"],
+                             capture_output=True, text=True).stdout
+    mounts = [l for l in mounted.splitlines() if l.startswith(disk)]
+
+    parts = []
+    if holders:
+        parts.append("device-mapper holders: " + ", ".join(sorted(set(holders))))
+    if mounts:
+        parts.append("still mounted: " + "; ".join(mounts))
+    return "  ".join(parts)
+
+
 def partition(disk: str, log=None) -> tuple:
     """Wipe signatures and lay down GPT. Returns (esp, luks_part)."""
+    release_disk(disk, log=log)
+
+    busy = disk_is_busy(disk)
+    if busy:
+        raise CommandFailed(
+            ["release", disk], 1,
+            f"{disk} is still in use after releasing it.\n"
+            f"  {busy}\n"
+            "  Reboot the live medium and try again; something outside the\n"
+            "  installer is holding the disk.")
+
     run(["wipefs", "-a", disk], log=log)
     run(["sgdisk", "-Z", disk], log=log)
     run(["sgdisk",

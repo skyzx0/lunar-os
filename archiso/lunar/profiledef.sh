@@ -29,4 +29,5 @@ file_permissions=(
   ["/usr/local/bin/lunar-live-user"]="0:0:755"
   ["/usr/local/bin/lunar-welcome"]="0:0:755"
   ["/usr/local/bin/lunar-diagnose"]="0:0:755"
+  ["/usr/local/bin/lunar-release"]="0:0:755"
 )

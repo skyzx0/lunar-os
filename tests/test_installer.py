@@ -94,3 +94,21 @@ print()
 print("both paths run; the failure log contains the real mount error:")
 for line in log.splitlines()[-7:]:
     print("   ", line)
+
+
+# --- disk module: every public helper must at least import and run ----------
+# A missing import in a rarely-taken branch does not show up until the branch
+# is taken, which on this module means during a real installation.
+
+from lunar_setup import disk as _disk
+
+for name in ("release_disk", "disk_is_busy", "human", "memory_bytes",
+             "list_disks", "tarball_ok" if hasattr(_disk, "tarball_ok") else "human"):
+    assert hasattr(_disk, name), f"disk.{name} missing"
+
+assert _disk.disk_is_busy("/dev/definitely-not-a-disk") == ""
+assert _disk.human(1536) .endswith("KiB")
+assert _disk.memory_bytes() > 0
+_disk.list_disks()          # must not raise on any machine
+
+print("disk helpers import and run")

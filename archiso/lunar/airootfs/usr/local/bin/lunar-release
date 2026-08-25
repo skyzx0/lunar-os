@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Free a disk left held by an interrupted installation.
+#
+# lunaros-setup does this automatically before partitioning. This exists for
+# the case where you want to inspect or reuse the disk by hand.
+set -uo pipefail
+
+disk="${1:-}"
+if [[ -z "$disk" ]]; then
+    echo "usage: lunar-release /dev/nvme0n1"
+    echo
+    lsblk -d -o PATH,SIZE,MODEL
+    exit 1
+fi
+
+echo ":: releasing $disk"
+
+swapoff -a 2>/dev/null && echo "  swap off"
+umount -R /mnt 2>/dev/null && echo "  /mnt unmounted"
+
+pvs --noheadings -o pv_name,vg_name 2>/dev/null | while read -r pv vg; do
+    [[ "$pv" == "$disk"* ]] || continue
+    echo "  deactivating volume group $vg"
+    vgchange -an "$vg" >/dev/null 2>&1
+done
+
+base="$(basename "$disk")"
+for entry in /sys/class/block/"$base"*; do
+    [[ -d "$entry/holders" ]] || continue
+    for holder in "$entry"/holders/*; do
+        [[ -e "$holder" ]] || continue
+        name="$(cat "$(basename "$holder" | sed 's|^|/sys/class/block/|')/dm/name" 2>/dev/null)" || continue
+        echo "  removing mapping $name"
+        cryptsetup close "$name" 2>/dev/null || dmsetup remove --force "$name" 2>/dev/null
+    done
+done
+
+udevadm settle
+
+if wipefs --noheadings "$disk" >/dev/null 2>&1; then
+    echo ":: $disk is free"
+else
+    echo ":: $disk is still busy - reboot the live medium" >&2
+    exit 1
+fi
