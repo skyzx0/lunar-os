@@ -103,6 +103,8 @@ def install(cfg, emit) -> None:
         disk.make_volumes(cfg.filesystem, log=log, target=luks_part)
         uuid = ""
     disk.mount_esp(esp, log=log)
+    # Our own volumes are up now; let LVM manage devices normally again.
+    disk.resume_autoactivation(log=log)
 
     # ---- base system ---------------------------------------------------
     log("Selecting mirrors", accent=True)

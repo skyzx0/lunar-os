@@ -100,6 +100,14 @@ def memory_bytes() -> int:
     return 8 * 1024**3
 
 
+def existing_partitions(disk: str) -> list:
+    """Partition device paths currently present on disk."""
+    out = subprocess.run(["lsblk", "-lno", "PATH,TYPE", disk],
+                         capture_output=True, text=True).stdout
+    return [line.split()[0] for line in out.splitlines()
+            if line.split()[-1] == "part"]
+
+
 def release_disk(disk: str, log=None) -> None:
     """Free a disk still held from an earlier attempt.
 
@@ -153,6 +161,23 @@ def release_disk(disk: str, log=None) -> None:
     run(["udevadm", "settle"], check=False, log=log)
 
 
+def suspend_autoactivation(log=None) -> None:
+    """Stop LVM from reactivating volume groups mid-install.
+
+    udev runs pvscan on every new partition. On a reinstall it finds the
+    previous run's metadata, activates the volume group, and the device is
+    held before the installer can wipe it. Masking the unit for the duration
+    of the install removes the race rather than trying to win it.
+    """
+    run(["systemctl", "mask", "--runtime", "lvm2-pvscan@.service"],
+        check=False, log=log)
+
+
+def resume_autoactivation(log=None) -> None:
+    run(["systemctl", "unmask", "--runtime", "lvm2-pvscan@.service"],
+        check=False, log=log)
+
+
 def disk_is_busy(disk: str) -> str:
     """Return a description of what still holds the disk, or an empty string."""
     base = os.path.basename(disk)
@@ -176,6 +201,7 @@ def disk_is_busy(disk: str) -> str:
 
 def partition(disk: str, log=None) -> tuple:
     """Wipe signatures and lay down GPT. Returns (esp, luks_part)."""
+    suspend_autoactivation(log=log)
     release_disk(disk, log=log)
 
     busy = disk_is_busy(disk)
@@ -186,6 +212,14 @@ def partition(disk: str, log=None) -> tuple:
             f"  {busy}\n"
             "  Reboot the live medium and try again; something outside the\n"
             "  installer is holding the disk.")
+
+    # Signatures live inside the partitions, and sgdisk only rewrites the
+    # table. Clear them while the partitions still exist: once the table is
+    # replaced, udev sees the same old LVM metadata in the new partition,
+    # autoactivates the volume group, and the device is busy before anything
+    # here gets a chance to touch it.
+    for part in existing_partitions(disk):
+        run(["wipefs", "-a", part], check=False, log=log)
 
     run(["wipefs", "-a", disk], log=log)
     run(["sgdisk", "-Z", disk], log=log)
@@ -199,12 +233,27 @@ def partition(disk: str, log=None) -> tuple:
     suffix = "p" if disk[-1].isdigit() else ""
     esp, data = f"{disk}{suffix}1", f"{disk}{suffix}2"
 
-    # sgdisk rewrites the partition table, not the partition contents. A
-    # previous attempt's LVM and filesystem signatures survive in the same
-    # place, and every later tool then stops to ask whether to overwrite them.
+    # udev may have autoactivated something off the new partitions in the
+    # moment between creating them and wiping them.
+    release_disk(disk, log=log)
+
     for part in (esp, data):
         run(["wipefs", "-a", part], check=False, log=log)
+
+    # LVM headers sit in the first megabytes and survive a wipefs that was
+    # blocked. Zeroing the start is decisive, cheap, and means the next tool
+    # finds nothing to ask about.
+    run(["dd", "if=/dev/zero", f"of={data}", "bs=1M", "count=16",
+         "conv=fsync"], check=False, log=log)
     run(["udevadm", "settle"], check=False, log=log)
+
+    still_busy = disk_is_busy(disk)
+    if still_busy:
+        raise CommandFailed(
+            ["prepare", disk], 1,
+            f"{disk} became busy again after partitioning.\n"
+            f"  {still_busy}\n"
+            "  Something is reactivating it. Reboot and retry.")
 
     return esp, data
 
