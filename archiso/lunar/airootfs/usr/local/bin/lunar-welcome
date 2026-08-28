@@ -75,6 +75,36 @@ def run(*args) -> None:
     subprocess.call(list(args))
 
 
+def online() -> bool:
+    import socket
+    for host in ("geo.mirror.pkgbuild.com", "archlinux.org"):
+        try:
+            with socket.create_connection((host, 443), timeout=3):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def connect_network() -> None:
+    """Hand over to whichever connection tool is present.
+
+    Installing needs the network, so this is worth one keystroke rather than
+    a command someone has to already know.
+    """
+    if has("nmtui"):
+        subprocess.call(["nmtui"])
+    elif has("iwctl"):
+        print(f"\n  {MUTED}At the prompt: station wlan0 connect YOUR-NETWORK"
+              f"\n  Then 'exit' to come back.{RESET}\n")
+        subprocess.call(["iwctl"])
+    else:
+        print(f"\n  {MUTED}No connection tool found. Configure the network "
+              f"manually.{RESET}\n")
+        return
+    print(f"\n  {'connected' if online() else 'still offline'}\n")
+
+
 def start_desktop() -> None:
     """Start Plasma on demand.
 
@@ -107,7 +137,10 @@ MENU = [
     ("4", "Manual installation",
      "Print every command the installer runs, to adapt yourself.",
      lambda: run("lunaros-setup", "--steps")),
-    ("5", "Shell",
+    ("5", "Connect to a network",
+     "Wi-Fi or wired. Installing needs a connection to the package mirrors.",
+     connect_network),
+    ("6", "Shell",
      "Leave this screen and use the system.",
      lambda: None),
 ]
@@ -124,6 +157,9 @@ def banner() -> None:
         f"{MUTED}Hardened by default.{RESET}",
         "",
         f"{MUTED}Nothing has been written to any disk.{RESET}",
+        "",
+        (f"{ACCENT}network ready{RESET}" if online()
+         else f"{MUTED}no network - option 5 connects{RESET}"),
     ]
     print()
     for i in range(max(len(art), len(rows))):
@@ -154,7 +190,7 @@ def main() -> int:
             print()
             return 0
 
-        if choice in ("5", "q", "quit", "exit", ""):
+        if choice in ("6", "q", "quit", "exit", ""):
             print()
             return 0
 
@@ -166,7 +202,7 @@ def main() -> int:
                 print()
                 return 0
 
-        print(f"  {MUTED}Enter 1 to 5.{RESET}")
+        print(f"  {MUTED}Enter 1 to 6.{RESET}")
 
 
 if __name__ == "__main__":

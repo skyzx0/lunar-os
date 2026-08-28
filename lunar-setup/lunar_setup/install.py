@@ -79,9 +79,93 @@ def _full_package_set(cfg) -> list:
     return sorted(set(pkgs))
 
 
+# Official geo-routed mirror first, then per-continent fallbacks. Used when
+# mirror ranking fails or produces nothing: an empty mirrorlist makes pacstrap
+# fail with "no servers configured for repository", which names the symptom
+# and not the cause.
+FALLBACK_MIRRORS = [
+    "https://geo.mirror.pkgbuild.com/$repo/os/$arch",
+    "https://europe.mirror.pkgbuild.com/$repo/os/$arch",
+    "https://america.mirror.pkgbuild.com/$repo/os/$arch",
+    "https://asia.mirror.pkgbuild.com/$repo/os/$arch",
+]
+
+
+def have_network(timeout: float = 5.0) -> bool:
+    """Can we actually reach a mirror?
+
+    A default route proves nothing: captive portals, DNS failures and blocked
+    outbound 443 all look like a working connection right up until a download
+    fails partway through an install.
+    """
+    import socket
+    for host in ("geo.mirror.pkgbuild.com", "archlinux.org"):
+        try:
+            with socket.create_connection((host, 443), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def require_network(log=None) -> None:
+    if have_network():
+        return
+    raise disk.CommandFailed(
+        ["network"], 1,
+        "No connection to the package mirrors.\n"
+        "  Nothing can be installed without one.\n"
+        "\n"
+        "  Connect, then run lunaros-setup again:\n"
+        "    Wi-Fi      nmtui\n"
+        "               or: iwctl, then station wlan0 connect YOUR-NETWORK\n"
+        "    Wired      should be automatic; check the cable\n"
+        "    Verify     ping -c1 archlinux.org\n"
+        "\n"
+        "  Reach a shell with Ctrl+Alt+F2.")
+
+
+def ensure_mirrors(log=None) -> None:
+    """Rank mirrors, and guarantee the list is not empty afterwards.
+
+    reflector needs the internet to rank mirrors. When it cannot reach the
+    mirror status service it exits without writing, leaving whatever was
+    there - which on a fresh medium is a file with every server commented out.
+    """
+    mirrorlist = "/etc/pacman.d/mirrorlist"
+
+    log("Selecting mirrors", accent=True)
+    r = run(["reflector", "--protocol", "https", "--latest", "20",
+             "--sort", "rate", "--save", mirrorlist],
+            check=False, log=log)
+
+    active = []
+    try:
+        with open(mirrorlist) as fh:
+            active = [l for l in fh if l.strip().startswith("Server")]
+    except OSError:
+        pass
+
+    if r.returncode != 0 or not active:
+        log("  ranking unavailable, using the built-in mirror list")
+        with open(mirrorlist, "w") as fh:
+            fh.write("# Written by lunaros-setup: mirror ranking was unavailable.\n")
+            for m in FALLBACK_MIRRORS:
+                fh.write(f"Server = {m}\n")
+    else:
+        log(f"  {len(active)} mirrors ranked")
+
+
 def install(cfg, emit) -> None:
     log = emit
     p = cfg.profile_obj()
+
+    # Checked before anything destructive. Finding out there is no network
+    # after the disk has been erased leaves a machine that neither boots its
+    # old system nor has a new one.
+    log("Checking the connection", accent=True)
+    require_network(log=log)
+    log("  mirrors reachable")
 
     # ---- disk ----------------------------------------------------------
     log("Partitioning", accent=True)
@@ -107,10 +191,7 @@ def install(cfg, emit) -> None:
     disk.resume_autoactivation(log=log)
 
     # ---- base system ---------------------------------------------------
-    log("Selecting mirrors", accent=True)
-    run(["reflector", "--protocol", "https", "--latest", "20",
-         "--sort", "rate", "--save", "/etc/pacman.d/mirrorlist"],
-        check=False, log=log)
+    ensure_mirrors(log=log)
 
     log("Installing packages", accent=True)
     pkgs = package_set(cfg)

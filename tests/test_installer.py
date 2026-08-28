@@ -133,3 +133,27 @@ except _Failed as exc:
     assert "timed out" in str(exc)
 
 print("run() cannot hang on input, and reports timeouts")
+
+
+# --- network guard ----------------------------------------------------------
+# Failing to notice there is no network until after the disk is erased leaves
+# a machine with no working OS at all. The check must come first and must say
+# what to do about it.
+
+from lunar_setup import install as _install
+
+assert callable(_install.have_network)
+assert _install.FALLBACK_MIRRORS, "no fallback mirrors configured"
+
+_real = _install.have_network
+_install.have_network = lambda timeout=5.0: False
+try:
+    _install.require_network()
+    raise AssertionError("require_network did not raise when offline")
+except _Failed as exc:
+    msg = str(exc)
+    assert "nmtui" in msg and "Ctrl+Alt+F2" in msg, "guidance missing from message"
+finally:
+    _install.have_network = _real
+
+print("network guard raises early with usable instructions")
