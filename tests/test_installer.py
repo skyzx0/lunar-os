@@ -157,3 +157,34 @@ finally:
     _install.have_network = _real
 
 print("network guard raises early with usable instructions")
+
+
+# --- the target must be installable from the medium -------------------------
+# The [lunar] repo once pointed at a path that existed only inside the build
+# container, so every Lunar package failed with "target not found" after the
+# disk had already been erased.
+
+import os as _os
+import tempfile as _tmp
+
+_repo = _tmp.mkdtemp()
+open(_os.path.join(_repo, "lunar.db.tar.zst"), "w").close()
+open(_os.path.join(_repo, ".siglevel"), "w").write("Optional TrustAll\n")
+
+_saved = _install.ON_MEDIUM_REPO
+try:
+    _install.ON_MEDIUM_REPO = _repo
+    _conf = _install.write_pacstrap_conf(_tmp.mktemp())
+    _text = open(_conf).read()
+    assert "[lunar]" in _text, "repo on the medium not used"
+    assert f"file://{_repo}" in _text
+    assert "/build/src" not in _text, "container path leaked into the config"
+
+    # And with no repo present, the config must still be valid.
+    _install.ON_MEDIUM_REPO = "/nonexistent"
+    _text = open(_install.write_pacstrap_conf(_tmp.mktemp())).read()
+    assert "[core]" in _text and "[lunar]" not in _text
+finally:
+    _install.ON_MEDIUM_REPO = _saved
+
+print("pacstrap config points at the medium, never at a build path")

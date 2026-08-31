@@ -53,21 +53,34 @@ def kernel_cmdline(profile, luks_uuid: str) -> str:
         "randomize_kstack_offset=on",
         "vsyscall=none",
         # speculative execution: do not let the kernel trade safety for speed
-        "mitigations=auto,nosmt",
         "spectre_v2=on",
         "spec_store_bypass_disable=on",
         "l1tf=full,force",
-        "mds=full,nosmt",
         "tsx=off",
-        "tsx_async_abort=full,nosmt",
-        # DMA and firmware
-        "iommu=force",
+        # DMA and firmware. iommu=force is deliberately absent: it prevents
+        # some machines from booting at all, and the isolation it adds over
+        # the per-vendor options below is small.
         "intel_iommu=on",
-        "amd_iommu=force_isolation",
+        "amd_iommu=on",
         "efi=disable_early_pci_dma",
         "debugfs=off",
-        "module.sig_enforce=1",
     ]
+
+    # Refusing unsigned modules also refuses every out-of-tree driver: NVIDIA,
+    # Broadcom wireless, VirtualBox. On the stricter profiles that is the
+    # intended trade; on the others it would silently cost people their
+    # graphics or their wireless.
+    if profile.lockdown == "confidentiality":
+        parts.append("module.sig_enforce=1")
+
+    # nosmt disables hyperthreading, which roughly halves throughput on
+    # multithreaded work. It closes real cross-thread attacks and is worth it
+    # when that is your threat model, and not otherwise.
+    if profile.lockdown == "confidentiality":
+        parts += ["mitigations=auto,nosmt", "mds=full,nosmt",
+                  "tsx_async_abort=full,nosmt"]
+    else:
+        parts += ["mitigations=auto", "mds=full", "tsx_async_abort=full"]
     if profile.apparmor:
         parts += ["lsm=landlock,lockdown,yama,integrity,apparmor,bpf",
                   "apparmor=1", "security=apparmor"]

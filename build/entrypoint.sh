@@ -79,6 +79,7 @@ cmd_repo_unsigned() {
 # of truth, so rewrite it to a file:// URL pointing at repo/out.
 wire_local_repo() {
     local repo_dir="$WORK/repo/out/lunar/os/x86_64"
+    local ar="$WORK/archiso/lunar/airootfs"
     local siglevel="Required DatabaseRequired"
 
     [[ -f "$repo_dir/lunar.db.tar.zst" ]] || {
@@ -86,15 +87,21 @@ wire_local_repo() {
         exit 1
     }
 
-    # An unsigned local build has to relax SigLevel or pacman refuses the db.
-    # This is scoped to the build container and never reaches the installed
-    # system, whose pacman.conf comes from the target's own configuration.
     if ! compgen -G "$repo_dir/*.sig" >/dev/null; then
         siglevel="Optional TrustAll"
-        log "Local repo is unsigned - relaxing SigLevel for this build only"
+        log "Local repo is unsigned - relaxing SigLevel"
     fi
 
-    log "Pointing [lunar] at the local repository"
+    # Two different consumers need two different paths to the same packages.
+    #
+    #   Build time: mkarchiso runs pacstrap on the build host, so the profile
+    #   pacman.conf must point at the container path.
+    #
+    #   Install time: lunaros-setup runs pacstrap on the booted machine, where
+    #   that container path does not exist. Without the packages physically on
+    #   the medium the installer fails with "target not found: lunar-cli",
+    #   having already erased the disk.
+    log "Pointing [lunar] at the build repository"
     python3 - "$WORK/archiso/lunar/pacman.conf" "$repo_dir" "$siglevel" <<'PYEOF'
 import re, sys
 conf, repo_dir, siglevel = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -104,84 +111,24 @@ text = re.sub(r"\[lunar\][^\[]*", block, text)
 open(conf, "w").write(text)
 PYEOF
 
+    log "Copying the repository onto the medium"
+    mkdir -p "$ar/var/lib/lunar/repo"
+    cp "$repo_dir"/*.pkg.tar.zst "$ar/var/lib/lunar/repo/" 2>/dev/null || true
+    cp "$repo_dir"/*.sig "$ar/var/lib/lunar/repo/" 2>/dev/null || true
+    cp "$repo_dir"/lunar.db* "$ar/var/lib/lunar/repo/" 2>/dev/null || true
+    cp "$repo_dir"/lunar.files* "$ar/var/lib/lunar/repo/" 2>/dev/null || true
+
+    # Record how the installer should treat it, rather than making the
+    # installer guess whether the build was signed.
+    printf '%s\n' "$siglevel" > "$ar/var/lib/lunar/repo/.siglevel"
+
+    log "  $(ls -1 "$ar/var/lib/lunar/repo"/*.pkg.tar.zst 2>/dev/null | wc -l) packages on the medium"
+
     # The keyring package only exists in signed builds; asking pacstrap for a
     # package that was never built fails the whole ISO.
     if ! compgen -G "$repo_dir/lunar-keyring-*.pkg.tar.zst" >/dev/null; then
         log "No keyring package - removing it from the live medium package list"
         sed -i '/^lunar-keyring$/d' "$WORK/archiso/lunar/packages.x86_64"
-    fi
-}
-
-# archiso enables units by shipping symlinks in airootfs. Creating them here
-# rather than committing symlinks keeps one auditable list of everything the
-# live medium starts, and survives checkouts on filesystems without symlinks.
-enable_live_units() {
-    local ar="$WORK/archiso/lunar/airootfs"
-    log "Enabling live medium services"
-
-    mkdir -p "$ar/etc/systemd/system/multi-user.target.wants"
-
-    # Boot to a console. The desktop is installed and one keystroke away
-    # from the welcome screen, but starting it at boot costs several hundred
-    # megabytes and a minute of startup for someone who came to run an
-    # installer.
-    ln -sf /usr/lib/systemd/system/multi-user.target "$ar/etc/systemd/system/default.target"
-    rm -f "$ar/etc/systemd/system/display-manager.service"
-
-    for unit in lunar-live-user.service; do
-        ln -sf "../$unit" "$ar/etc/systemd/system/multi-user.target.wants/$unit"
-    done
-    ln -sf /usr/lib/systemd/system/NetworkManager.service \
-        "$ar/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
-
-    # A rescue console must survive whatever else breaks.
-    mkdir -p "$ar/etc/systemd/system/getty.target.wants"
-    for tty in tty1 tty2; do
-        ln -sf /usr/lib/systemd/system/getty@.service \
-            "$ar/etc/systemd/system/getty.target.wants/getty@$tty.service"
-    done
-
-    # A console medium runs none of these, and each costs memory a small
-    # machine does not have to spare. Masked rather than disabled so a
-    # dependency cannot pull them back in.
-    for unit in systemd-oomd.service packagekit.service man-db.service \
-                bluetooth.service ModemManager.service cups.service \
-                avahi-daemon.service avahi-daemon.socket upower.service \
-                plasma-baloorunner.service; do
-        ln -sf /dev/null "$ar/etc/systemd/system/$unit"
-    done
-}
-
-# pacstrap aborts on file conflicts, and the message points at the package
-# rather than at the profile that duplicated the file. Catch it here, where
-# the fix is obvious, instead of 3 minutes into a package download.
-check_profile_conflicts() {
-    local repo_dir="$WORK/repo/out/lunar/os/x86_64"
-    local ar="$WORK/archiso/lunar/airootfs"
-    local conflicts=0
-
-    [[ -d "$ar" ]] || return 0
-    for pkg in "$repo_dir"/*.pkg.tar.zst; do
-        [[ -f "$pkg" ]] || continue
-        while read -r path; do
-            path="${path#./}"
-            # Directories are expected to overlap; only files conflict. The
-            # archive root normalises to an empty string, which would match
-            # airootfs itself.
-            [[ -z "$path" || "$path" == */ ]] && continue
-            [[ "$path" == .* ]] && continue          # .PKGINFO, .BUILDINFO
-            if [[ -f "$ar/$path" ]]; then
-                echo "  conflict: $(basename "$pkg") also ships /$path" >&2
-                conflicts=1
-            fi
-        done < <(tar -tf "$pkg" 2>/dev/null)
-    done
-
-    if (( conflicts )); then
-        echo >&2
-        echo "The archiso profile ships files that a Lunar package also owns." >&2
-        echo "Remove them from archiso/lunar/airootfs and let the package own them." >&2
-        exit 1
     fi
 }
 
@@ -212,6 +159,7 @@ cmd_check() {
     # These paths broke twice on real hardware for reasons a single run would
     # have caught. Run them here instead.
     cd "$WORK" && python tests/test_installer.py
+    cd "$WORK" && python tests/test_install_dryrun.py
 
     log "Package set sanity check"
     cd "$WORK/lunar-setup" && python -c "

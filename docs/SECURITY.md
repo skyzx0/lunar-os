@@ -84,6 +84,24 @@ prevent Windows from booting. The installer passes `--microsoft` for this
 reason; that also means Microsoft's signing key stays trusted, which is a real
 weakening, and it is the pragmatic choice on consumer laptops.
 
+**Some hardening is profile-gated, on purpose.** Three settings break real
+machines rather than merely inconveniencing them, so they apply only on
+Paranoid and Onion:
+
+- `module.sig_enforce=1` refuses every out-of-tree driver. That means no
+  NVIDIA, no Broadcom wireless, no VirtualBox. On a machine that needs one of
+  those it is not hardening, it is a brick.
+- `nosmt` disables hyperthreading and roughly halves multithreaded
+  throughput. It closes real cross-thread attacks, and is worth that cost only
+  when those attacks are in your threat model.
+- `iommu=force` is not used at all. It prevents some machines from booting,
+  and adds little over `intel_iommu=on` / `amd_iommu=on`, which are always set.
+
+There is also no `hidepid` entry for `/proc` in fstab. systemd mounts `/proc`
+before fstab is read, and an entry it disagrees with drops the machine into
+emergency mode at boot. Process visibility is restricted per service with
+`ProtectProc` instead, which cannot make the system unbootable.
+
 **UEFI only.** The install medium has no BIOS boot path. Signed unified kernel
 images, Secure Boot enrolment and TPM2 sealing all require UEFI, so a machine
 that can only boot BIOS cannot run the installed system regardless. Offering a
