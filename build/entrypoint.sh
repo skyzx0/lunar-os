@@ -161,6 +161,11 @@ cmd_check() {
     cd "$WORK" && python tests/test_installer.py
     cd "$WORK" && python tests/test_install_dryrun.py
 
+    log "Verifying package names against the repositories"
+    # The one check that cannot be done from a laptop with no Arch mirrors:
+    # does every package the installer asks for actually exist?
+    cd "$WORK" && python tools/check-packages.py
+
     log "Package set sanity check"
     cd "$WORK/lunar-setup" && python -c "
 from lunar_setup.profiles import Config, PROFILES, DESKTOPS
