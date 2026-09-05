@@ -45,6 +45,7 @@ wireless-regdb
 
 # rescue and inspection
 vim
+less
 htop
 lsof
 tcpdump

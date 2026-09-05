@@ -105,6 +105,25 @@ def connect_network() -> None:
     print(f"\n  {'connected' if online() else 'still offline'}\n")
 
 
+def show_last_log() -> None:
+    """Show the transcript from the last installation attempt.
+
+    On the menu because a failed install is the moment someone needs this,
+    and expecting them to already know a command at that moment is how
+    failures go unreported.
+    """
+    import glob
+    for path in ("/tmp/lunar-setup.log", "/root/lunar-setup.log",
+                 "/lunar-setup.log"):
+        if os.path.exists(path):
+            if has("less"):
+                subprocess.call(["less", path])
+            else:
+                subprocess.call(["cat", path])
+            return
+    print(f"\n  {MUTED}No installation has been attempted yet.{RESET}\n")
+
+
 def start_desktop() -> None:
     """Start Plasma on demand.
 
@@ -140,7 +159,10 @@ MENU = [
     ("5", "Connect to a network",
      "Wi-Fi or wired. Installing needs a connection to the package mirrors.",
      connect_network),
-    ("6", "Shell",
+    ("6", "Show the last install log",
+     "The full transcript of the last attempt, including any error.",
+     show_last_log),
+    ("7", "Shell",
      "Leave this screen and use the system.",
      lambda: None),
 ]
@@ -190,7 +212,7 @@ def main() -> int:
             print()
             return 0
 
-        if choice in ("6", "q", "quit", "exit", ""):
+        if choice in ("7", "q", "quit", "exit", ""):
             print()
             return 0
 
@@ -202,7 +224,7 @@ def main() -> int:
                 print()
                 return 0
 
-        print(f"  {MUTED}Enter 1 to 6.{RESET}")
+        print(f"  {MUTED}Enter 1 to 7.{RESET}")
 
 
 if __name__ == "__main__":

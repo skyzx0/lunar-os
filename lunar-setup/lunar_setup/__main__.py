@@ -262,6 +262,56 @@ def wizard(stdscr) -> Config:
 LOG_PATH = "/tmp/lunar-setup.log"
 
 
+def show_failure() -> None:
+    """Print the tail of the transcript on the plain terminal, and keep it there.
+
+    Also copies the log somewhere that survives, because /tmp on a live medium
+    is RAM and the first thing anyone does after a failed install is reboot.
+    """
+    red = "\033[31m"; dim = "\033[2m"; reset = "\033[0m"; bold = "\033[1m"
+
+    try:
+        with open(LOG_PATH) as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        lines = ["(the transcript could not be read)"]
+
+    print()
+    print(f"{red}{bold}  Installation failed{reset}")
+    print(f"{dim}  " + "-" * 68 + reset)
+    for line in lines[-25:]:
+        print("  " + line)
+    print(f"{dim}  " + "-" * 68 + reset)
+    print()
+
+    copies = []
+    for target in ("/root/lunar-setup.log", "/lunar-setup.log"):
+        try:
+            with open(LOG_PATH) as src, open(target, "w") as dst:
+                dst.write(src.read())
+            copies.append(target)
+        except OSError:
+            continue
+
+    print(f"  The full transcript is at {LOG_PATH}")
+    for c in copies:
+        print(f"  and at {c}")
+    print()
+    print("  To read all of it:")
+    print(f"    less {LOG_PATH}          (q to quit)")
+    print(f"    lunaros-setup --last-log  prints it again")
+    print()
+    print("  To photograph it, scroll back with Shift+PageUp.")
+    print("  The target is still mounted at /mnt; re-running lunaros-setup")
+    print("  starts over and re-partitions from scratch.")
+    print()
+    try:
+        input("  Press Enter to return to a shell ")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+
 def run_install(stdscr, cfg) -> bool:
     """Run the installation. Returns True on success.
 
@@ -309,7 +359,7 @@ def run_install(stdscr, cfg) -> bool:
             emit("Reach a shell with Ctrl+Alt+F2 to read it.")
 
         emit("")
-        emit("press any key to exit")
+        emit("press any key to continue")
         stdscr.getch()
 
     return not failed
@@ -323,6 +373,8 @@ def main() -> int:
                     help="re-apply the security profile to the running system")
     ap.add_argument("--fast", action="store_true",
                     help="minimal console system, smallest package set")
+    ap.add_argument("--last-log", action="store_true",
+                    help="print the transcript from the last installation")
     ap.add_argument("--steps", action="store_true",
                     help="print the manual installation commands and exit")
     ap.add_argument("--memory", action="store_true",
@@ -330,6 +382,17 @@ def main() -> int:
     args = ap.parse_args()
 
     # These two are read-only and useful without privileges.
+    if args.last_log:
+        for path in (LOG_PATH, "/root/lunar-setup.log", "/lunar-setup.log"):
+            try:
+                with open(path) as fh:
+                    print(fh.read())
+                return 0
+            except OSError:
+                continue
+        print("No installation transcript found.")
+        return 1
+
     if args.steps:
         from .manual import STEPS
         print(STEPS)
@@ -365,12 +428,11 @@ def main() -> int:
     ok = curses.wrapper(run_install, cfg)
 
     if not ok:
-        # Leave the target mounted. Tearing it down on failure destroys the
-        # evidence and means the next attempt starts from a half-built disk
-        # with no way to see what happened.
-        print(f"Installation failed. See {LOG_PATH}")
-        print("The target is still mounted at /mnt for inspection.")
-        print("Re-run lunaros-setup to start over; it re-partitions from scratch.")
+        # curses has released the terminal by now, so this stays on screen
+        # instead of being wiped when the wizard exits. The failure used to be
+        # drawn inside the curses window and vanished on the next keypress,
+        # which made every failure impossible to report.
+        show_failure()
         return 1
 
     os.makedirs("/mnt/etc/lunar", exist_ok=True)
