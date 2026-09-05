@@ -14,6 +14,27 @@ OUT=/out
 
 log() { printf '\n:: %s\n' "$*"; }
 
+# Report where a failure happened. Without this a missing binary surfaces as
+# "exit code 127" with no indication of which command, which costs a full
+# build to work out.
+trap 'rc=$?; [[ $rc -eq 0 ]] || printf "\n!! failed at line %s: %s (exit %s)\n" \
+      "$LINENO" "$BASH_COMMAND" "$rc" >&2' ERR
+
+# Everything this script shells out to. Checked once, up front, so a missing
+# tool is named immediately rather than part way through a build.
+preflight() {
+    local missing=()
+    for cmd in rsync tar find sed grep xargs mkarchiso pacman makepkg \
+               repo-add gpg sudo install python3 ln mkdir cp rm chmod chown; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    if (( ${#missing[@]} )); then
+        printf "!! missing commands: %s\n" "${missing[*]}" >&2
+        printf "   The build container is incomplete; check build/Dockerfile.\n" >&2
+        exit 1
+    fi
+}
+
 sync_source() {
     log "Copying source into the container volume"
     mkdir -p "$WORK"
@@ -72,6 +93,79 @@ cmd_repo_unsigned() {
     mkdir -p "$OUT/repo"
     rsync -a "$WORK/repo/out/" "$OUT/repo/"
     log "Packages in out/repo/ - sign them before publishing"
+}
+
+# archiso enables units by shipping symlinks in airootfs. Creating them here
+# rather than committing symlinks keeps one auditable list of everything the
+# live medium starts, and survives checkouts on filesystems without symlinks.
+enable_live_units() {
+    local ar="$WORK/archiso/lunar/airootfs"
+    log "Enabling live medium services"
+
+    mkdir -p "$ar/etc/systemd/system/multi-user.target.wants"
+
+    # Boot to a console. The desktop is installed and one keystroke away from
+    # the welcome screen, but starting it at boot costs several hundred
+    # megabytes and a minute of startup for someone who came to run an
+    # installer.
+    ln -sf /usr/lib/systemd/system/multi-user.target \
+        "$ar/etc/systemd/system/default.target"
+    rm -f "$ar/etc/systemd/system/display-manager.service"
+
+    ln -sf "../lunar-live-user.service" \
+        "$ar/etc/systemd/system/multi-user.target.wants/lunar-live-user.service"
+    ln -sf /usr/lib/systemd/system/NetworkManager.service \
+        "$ar/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+
+    # A rescue console must survive whatever else breaks.
+    mkdir -p "$ar/etc/systemd/system/getty.target.wants"
+    for tty in tty1 tty2; do
+        ln -sf /usr/lib/systemd/system/getty@.service \
+            "$ar/etc/systemd/system/getty.target.wants/getty@$tty.service"
+    done
+
+    # A console medium runs none of these, and each costs memory a small
+    # machine does not have to spare. Masked rather than disabled so a
+    # dependency cannot pull them back in.
+    for unit in systemd-oomd.service packagekit.service man-db.service \
+                bluetooth.service ModemManager.service cups.service \
+                avahi-daemon.service avahi-daemon.socket upower.service \
+                plasma-baloorunner.service; do
+        ln -sf /dev/null "$ar/etc/systemd/system/$unit"
+    done
+}
+
+# pacstrap aborts on file conflicts, and its message names the package rather
+# than the profile that duplicated the file. Catch it here, where the fix is
+# obvious, instead of minutes into a package download.
+check_profile_conflicts() {
+    local repo_dir="$WORK/repo/out/lunar/os/x86_64"
+    local ar="$WORK/archiso/lunar/airootfs"
+    local conflicts=0
+
+    [[ -d "$ar" ]] || return 0
+    for pkg in "$repo_dir"/*.pkg.tar.zst; do
+        [[ -f "$pkg" ]] || continue
+        while read -r path; do
+            path="${path#./}"
+            # Directories are expected to overlap; only files conflict. The
+            # archive root normalises to an empty string, which would match
+            # airootfs itself.
+            [[ -z "$path" || "$path" == */ ]] && continue
+            [[ "$path" == .* ]] && continue          # .PKGINFO, .BUILDINFO
+            if [[ -f "$ar/$path" ]]; then
+                echo "  conflict: $(basename "$pkg") also ships /$path" >&2
+                conflicts=1
+            fi
+        done < <(tar -tf "$pkg" 2>/dev/null)
+    done
+
+    if (( conflicts )); then
+        echo >&2
+        echo "The archiso profile ships files that a Lunar package also owns." >&2
+        echo "Remove them from archiso/lunar/airootfs and let the package own them." >&2
+        exit 1
+    fi
 }
 
 # The shipped pacman.conf points [lunar] at a public server that does not exist
@@ -138,6 +232,15 @@ cmd_iso() {
     check_profile_conflicts
     wire_local_repo
     log "Building the ISO"
+    # mkarchiso shells out to a long list of tools, and reports a missing one
+    # only as a non-zero exit somewhere in its own output.
+    for tool in mkfs.erofs mkfs.fat xorriso mmd mcopy pacstrap; do
+        command -v "$tool" >/dev/null || {
+            echo "!! $tool is missing; mkarchiso cannot build an image" >&2
+            exit 1
+        }
+    done
+
     # mkarchiso wants a real Linux work directory with functioning ownership.
     rm -rf /build/work
     mkarchiso -v -w /build/work -o "$OUT" "$WORK/archiso/lunar"
@@ -158,6 +261,7 @@ cmd_check() {
     log "Installer smoke test"
     # These paths broke twice on real hardware for reasons a single run would
     # have caught. Run them here instead.
+    cd "$WORK" && python tests/test_build_script.py
     cd "$WORK" && python tests/test_installer.py
     cd "$WORK" && python tests/test_install_dryrun.py
 
@@ -189,6 +293,8 @@ cmd_clean() {
     rm -rf /build/work /build/src
     log "Container volume cleared"
 }
+
+preflight
 
 case "${1:-help}" in
     repo)  cmd_repo ;;
