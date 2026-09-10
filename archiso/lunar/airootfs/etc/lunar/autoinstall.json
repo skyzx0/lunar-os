@@ -1,0 +1,17 @@
+{
+  "disk": "/dev/vda",
+  "encrypt": false,
+  "filesystem": "ext4",
+  "hostname": "lunaros",
+  "username": "tester",
+  "user_password": "lunar",
+  "root_locked": true,
+  "timezone": "UTC",
+  "locale": "en_US.UTF-8",
+  "keymap": "us",
+  "desktop": "minimal",
+  "profile": "baseline",
+  "fast": true,
+  "spoof_network": false,
+  "cover_traffic": false
+}

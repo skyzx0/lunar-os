@@ -69,6 +69,24 @@ jobs:
             lunar-build iso
           df -h / | tail -1
 
+      # The step that has been missing all along. Every failure so far would
+      # have been caught here rather than on real hardware.
+      - name: Install in a VM and boot the result
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf libarchive-tools
+          ls -l /dev/kvm 2>/dev/null && echo "KVM available" || echo "no KVM, using TCG (slower)"
+          sudo chmod 666 /dev/kvm 2>/dev/null || true
+          WORK=$PWD/vmtest INSTALL_TIMEOUT=2700 bash tools/vm-test.sh out/*.iso
+
+      - name: Upload VM logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-logs
+          path: vmtest/*.log
+          retention-days: 5
+
       - name: Checksums
         run: |
           cd out

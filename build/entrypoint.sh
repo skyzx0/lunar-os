@@ -114,6 +114,11 @@ enable_live_units() {
 
     ln -sf "../lunar-live-user.service" \
         "$ar/etc/systemd/system/multi-user.target.wants/lunar-live-user.service"
+
+    # Unattended install for automated testing. The unit is gated on a kernel
+    # command line flag, so on a normal boot it does nothing at all.
+    ln -sf "../lunar-autoinstall.service" \
+        "$ar/etc/systemd/system/multi-user.target.wants/lunar-autoinstall.service"
     ln -sf /usr/lib/systemd/system/NetworkManager.service \
         "$ar/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
 

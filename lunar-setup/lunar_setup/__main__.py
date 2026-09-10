@@ -414,8 +414,32 @@ def main() -> int:
         return 0
 
     if args.unattended:
-        cfg = Config(**json.load(open(args.unattended)))
-        install.install(cfg, lambda m, accent=False: print(m))
+        raw = json.load(open(args.unattended))
+        # Ignore keys this version does not know about rather than failing on
+        # an answer file written for a different one.
+        known = {f for f in vars(Config()).keys()}
+        unknown = set(raw) - known
+        if unknown:
+            print(f"ignoring unknown settings: {' '.join(sorted(unknown))}")
+        cfg = Config(**{k: v for k, v in raw.items() if k in known})
+
+        # The same transcript an interactive install writes, so an unattended
+        # failure can be read afterwards.
+        with open(LOG_PATH, "w", buffering=1) as log_file:
+            def emit(line: str, accent: bool = False) -> None:
+                print(line, flush=True)
+                try:
+                    log_file.write(line + "\n")
+                except (ValueError, OSError):
+                    pass
+            try:
+                install.install(cfg, emit)
+            except Exception as exc:                  # noqa: BLE001
+                emit("")
+                emit("Installation failed.")
+                for line in str(exc).splitlines():
+                    emit("  " + line)
+                return 1
         return 0
 
     cfg = curses.wrapper(wizard)

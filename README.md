@@ -101,6 +101,8 @@ Test the ISO before writing it to hardware:
     docs/BUILD-WINDOWS.md   building from Windows, same
     docs/BUILD-CI.md        building on GitHub Actions or a rented VM
     docs/PERFORMANCE.md     what it actually idles at, and why
+    docs/TESTING.md         how an image is verified before release
+    tools/vm-test.sh        install in a VM and boot the result
     docs/COMMANDS.md        the Lunar command set
     docs/LOOK.md            desktop appearance, and what is not themed
     src/                    lum, lunarfetch, and the look package

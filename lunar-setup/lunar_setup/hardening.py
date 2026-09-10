@@ -43,6 +43,11 @@ def kernel_cmdline(profile, luks_uuid: str) -> str:
         "rw",
         "quiet",
         "splash",
+        # A serial console costs nothing on hardware that has no serial port,
+        # and it is the only way an automated test can see whether the
+        # installed system actually boots.
+        "console=tty0",
+        "console=ttyS0,115200",
         "loglevel=3",
         "vt.global_cursor_default=0",
         # memory hygiene
