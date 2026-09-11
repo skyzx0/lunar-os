@@ -14,7 +14,11 @@
 set -uo pipefail
 
 ISO="${1:-}"
+# Created explicitly: when WORK is inherited from the environment nothing
+# else makes the directory, and the first thing to write into it fails in a
+# way that only shows up later as a missing file.
 WORK="${WORK:-$(mktemp -d)}"
+mkdir -p "$WORK" || { echo "cannot create $WORK" >&2; exit 1; }
 DISK="$WORK/target.qcow2"
 INSTALL_LOG="$WORK/install.log"
 BOOT_LOG="$WORK/boot.log"
@@ -37,21 +41,32 @@ command -v qemu-img >/dev/null || { fail "qemu-img missing"; exit 1; }
 find_fw() {
     for f in "$@"; do [[ -f "$f" ]] && { echo "$f"; return; }; done
 }
+# Arch, Ubuntu and Homebrew all put the firmware somewhere different.
 FW_CODE="$(find_fw \
     /usr/share/edk2/x64/OVMF_CODE.4m.fd \
     /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
     /usr/share/OVMF/OVMF_CODE_4M.fd \
     /usr/share/OVMF/OVMF_CODE.fd \
-    /usr/share/qemu/edk2-x86_64-code.fd)"
+    /usr/share/qemu/edk2-x86_64-code.fd \
+    /opt/homebrew/share/qemu/edk2-x86_64-code.fd \
+    /usr/local/share/qemu/edk2-x86_64-code.fd)"
 FW_VARS_SRC="$(find_fw \
     /usr/share/edk2/x64/OVMF_VARS.4m.fd \
     /usr/share/edk2-ovmf/x64/OVMF_VARS.fd \
     /usr/share/OVMF/OVMF_VARS_4M.fd \
-    /usr/share/OVMF/OVMF_VARS.fd)"
+    /usr/share/OVMF/OVMF_VARS.fd \
+    /opt/homebrew/share/qemu/edk2-x86_64-vars.fd \
+    /usr/local/share/qemu/edk2-x86_64-vars.fd)"
 
 [[ -n "$FW_CODE" ]] || { fail "no UEFI firmware found (install edk2-ovmf or ovmf)"; exit 1; }
 FW_VARS="$WORK/OVMF_VARS.fd"
-if [[ -n "$FW_VARS_SRC" ]]; then cp "$FW_VARS_SRC" "$FW_VARS"; else qemu-img create -f raw "$FW_VARS" 4M >/dev/null; fi
+if [[ -n "$FW_VARS_SRC" ]]; then
+    cp "$FW_VARS_SRC" "$FW_VARS" || { fail "could not copy $FW_VARS_SRC"; exit 1; }
+else
+    qemu-img create -f raw "$FW_VARS" 4M >/dev/null
+fi
+[[ -f "$FW_VARS" ]] || { fail "firmware variables file was not created at $FW_VARS"; exit 1; }
+chmod u+w "$FW_VARS"
 
 ACCEL="tcg"
 [[ -w /dev/kvm ]] && ACCEL="kvm"
