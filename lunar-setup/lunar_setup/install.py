@@ -429,6 +429,17 @@ def install(cfg, emit) -> None:
     hardening.write("/etc/vconsole.conf", f"KEYMAP={cfg.keymap}\n", log=log)
     hardening.write("/etc/hostname", cfg.hostname + "\n", log=log)
 
+    # systemd decides a system has "never booted" when /etc/machine-id is
+    # absent, and then systemd-firstboot takes the console and asks for a
+    # timezone, locale and root password before anything else can run. The
+    # installer has already been told all of that, so answer it here and
+    # generate the machine id; then mask the unit so it cannot appear later.
+    chroot(f"systemd-firstboot --locale='{cfg.locale}' "
+           f"--keymap='{cfg.keymap}' --timezone='{cfg.timezone}' "
+           f"--hostname='{cfg.hostname}' --setup-machine-id",
+           check=False, log=log)
+    chroot("systemctl mask systemd-firstboot.service", check=False, log=log)
+
     # Brand the installed system. os-release is what neofetch, GRUB, systemd,
     # bug trackers and half the desktop read to name the distribution; leaving
     # it saying "Arch Linux" would be the single most visible wrong thing.

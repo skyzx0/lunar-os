@@ -18,7 +18,7 @@ permissions:
 jobs:
   iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +77,7 @@ jobs:
           sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf libarchive-tools
           ls -l /dev/kvm 2>/dev/null && echo "KVM available" || echo "no KVM, using TCG (slower)"
           sudo chmod 666 /dev/kvm 2>/dev/null || true
-          WORK=$PWD/vmtest INSTALL_TIMEOUT=2700 bash tools/vm-test.sh out/*.iso
+          WORK=$PWD/vmtest bash tools/vm-test.sh out/*.iso
 
       - name: Upload VM logs on failure
         if: failure()

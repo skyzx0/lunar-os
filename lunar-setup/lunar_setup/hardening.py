@@ -444,7 +444,11 @@ session    required   pam_unix.so
     # A stable machine-id is a durable cross-boot identifier that leaks in DHCP
     # and in some telemetry. Regenerate it per boot on the anonymity profile.
     if p.tor_transparent:
+        # "uninitialized" makes systemd regenerate the id each boot, which is
+        # the point. It also satisfies the condition systemd-firstboot waits
+        # on, so that unit must stay masked or it will prompt on every boot.
         write("/etc/machine-id", "uninitialized\n", log=log)
+        chroot("systemctl mask systemd-firstboot.service", check=False, log=log)
     write("/etc/modprobe.d/lunar-blacklist.conf", blacklist(), log=log)
     write("/etc/nftables.conf", nftables(p), mode=0o700, log=log)
     os.makedirs(f"{ROOT}/etc/nftables.d", exist_ok=True)

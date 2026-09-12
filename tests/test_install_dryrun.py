@@ -146,5 +146,13 @@ assert any("genfstab" in c for c in calls), "fstab never generated"
 # 5. The target gets its own pacman configuration.
 assert "/etc/pacman.conf" in WRITES, "target pacman.conf never written"
 
+# 6. systemd-firstboot must be answered and masked. Left alone it takes the
+#    console on first boot and asks for a timezone, blocking everything after
+#    it - which on the live medium meant the installer never started at all.
+assert any("systemd-firstboot --locale" in c for c in calls), \
+    "firstboot settings never applied to the target"
+assert any("mask systemd-firstboot" in c for c in calls), \
+    "systemd-firstboot not masked on the target"
+
 print("ordering and package checks pass")
 print(f"  {len(calls)} commands, {len(WRITES)} files written")

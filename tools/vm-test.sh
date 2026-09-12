@@ -23,8 +23,8 @@ DISK="$WORK/target.qcow2"
 INSTALL_LOG="$WORK/install.log"
 BOOT_LOG="$WORK/boot.log"
 MEM="${MEM:-3072}"
-INSTALL_TIMEOUT="${INSTALL_TIMEOUT:-2400}"
-BOOT_TIMEOUT="${BOOT_TIMEOUT:-300}"
+INSTALL_TIMEOUT="${INSTALL_TIMEOUT:-3600}"
+BOOT_TIMEOUT="${BOOT_TIMEOUT:-900}"
 
 red=$'\033[31m'; green=$'\033[32m'; dim=$'\033[2m'; cyan=$'\033[36m'; off=$'\033[0m'
 say()  { printf '\n%s::%s %s\n' "$cyan" "$off" "$*"; }
@@ -71,6 +71,9 @@ chmod u+w "$FW_VARS"
 ACCEL="tcg"
 [[ -w /dev/kvm ]] && ACCEL="kvm"
 say "firmware $FW_CODE, acceleration $ACCEL"
+if [[ "$ACCEL" == "tcg" ]]; then
+    say "no KVM: every instruction is emulated, so this takes tens of minutes"
+fi
 
 # --- extract the kernel so the command line can be controlled -------------
 # systemd-boot cannot be driven headlessly, and the autoinstall flag has to
@@ -103,7 +106,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -drive file="$DISK",if=virtio,format=qcow2 \
     -cdrom "$ISO" \
     -kernel "$KERNEL" -initrd "$INITRD" \
-    -append "archisobasedir=lunar archisodevice=/dev/sr0 console=ttyS0,115200 lunar.autoinstall lunar.disk=/dev/vda" \
+    -append "archisobasedir=lunar archisodevice=/dev/sr0 console=ttyS0,115200 systemd.firstboot=off lunar.autoinstall lunar.disk=/dev/vda" \
     -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
     -nographic -serial mon:stdio \
     > "$INSTALL_LOG" 2>&1

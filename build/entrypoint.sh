@@ -132,6 +132,11 @@ enable_live_units() {
     # A console medium runs none of these, and each costs memory a small
     # machine does not have to spare. Masked rather than disabled so a
     # dependency cannot pull them back in.
+    # systemd-firstboot prompts on the console for a timezone and locale and
+    # blocks until answered. On a live medium that means nothing after it
+    # ever runs - no welcome screen, no installer, no autoinstall.
+    ln -sf /dev/null "$ar/etc/systemd/system/systemd-firstboot.service"
+
     for unit in systemd-oomd.service packagekit.service man-db.service \
                 bluetooth.service ModemManager.service cups.service \
                 avahi-daemon.service avahi-daemon.socket upower.service \
