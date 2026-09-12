@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import time
 
 from . import disk, hardening
 from .profiles import DESKTOPS
@@ -353,6 +354,70 @@ def create_user(cfg, log=None) -> None:
     chroot(f"useradd -m -G {groups} -s {shell} {cfg.username}", log=log)
 
 
+def run_pacstrap(conf: str, pkgs: list, log=None, timeout: int = 3600) -> int:
+    """Install the package set, streaming output into the transcript.
+
+    Two things this gets right that the plain call did not.
+
+    stdin is closed. pacman asks questions - which provider to use, whether to
+    replace a package, whether to trust a key - and with stdin inherited from
+    a wizard that owns the terminal, the question is never seen and the answer
+    never comes. The install simply stops, with no output and no error, which
+    is indistinguishable from a slow download.
+
+    Output is streamed rather than left on the terminal, so what pacman said
+    ends up in the transcript. Every diagnosis so far has depended on someone
+    photographing a screen before it scrolled.
+    """
+    cmd = ["pacstrap", "-K", "-C", conf, ROOT] + pkgs
+    if log:
+        log(f"  $ pacstrap -K -C {conf} {ROOT} ({len(pkgs)} packages)")
+
+    # stdin is fed from `yes` rather than closed. Closing it stops the hang
+    # but turns any prompt into an abort; feeding it means a question about
+    # which provider to use, or whether to replace a package, is answered and
+    # the install continues. Both beat waiting forever on a question nobody
+    # can see, which is what an inherited terminal produced.
+    yes_proc = subprocess.Popen(["yes"], stdout=subprocess.PIPE)
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=yes_proc.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    yes_proc.stdout.close()      # only the child needs the read end
+
+    start = time.time()
+    last = ""
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            # Download progress redraws the same line hundreds of times; keep
+            # the transcript readable by dropping consecutive duplicates.
+            if line == last:
+                continue
+            last = line
+            if log:
+                log("   " + line[:100])
+            if time.time() - start > timeout:
+                proc.kill()
+                if log:
+                    log(f"  pacstrap exceeded {timeout}s and was stopped")
+                return 124
+    finally:
+        proc.stdout.close()
+        yes_proc.kill()
+        yes_proc.wait()
+
+    return proc.wait()
+
+
 def install(cfg, emit) -> None:
     log = emit
     p = cfg.profile_obj()
@@ -395,13 +460,13 @@ def install(cfg, emit) -> None:
     pkgs = resolve_packages(package_set(cfg), conf, log=log)
     log(f"  {len(pkgs)} packages")
 
-    r = subprocess.run(["pacstrap", "-K", "-C", conf, ROOT] + pkgs)
-    if r.returncode != 0:
+    rc = run_pacstrap(conf, pkgs, log=log)
+    if rc != 0:
         raise disk.CommandFailed(
-            ["pacstrap", ROOT], r.returncode,
+            ["pacstrap", ROOT], rc,
             "Package installation failed.\n"
-            "  The output above says which package or mirror was the problem.\n"
-            f"  The configuration used is at {conf}.")
+            "  The transcript above shows which package or mirror was the\n"
+            f"  problem. The configuration used is at {conf}.")
 
     log("Configuring package management", accent=True)
     write_target_pacman_conf(log=log)

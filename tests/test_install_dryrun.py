@@ -43,6 +43,17 @@ def fake_subprocess_run(cmd, *a, **k):
     return types.SimpleNamespace(returncode=0, stdout=out, stderr="")
 
 
+def fake_popen(cmd, **kw):
+    CALLS.append(list(cmd))
+    return types.SimpleNamespace(
+        stdout=iter([]), wait=lambda: 0, kill=lambda: None)
+
+
+def fake_pacstrap(conf, pkgs, log=None, timeout=3600):
+    CALLS.append(["pacstrap", "-K", "-C", conf, "/mnt", *pkgs])
+    return 0
+
+
 def fake_chroot(cmd, log=None, check=True):
     CALLS.append(["chroot", cmd])
     return types.SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -80,7 +91,10 @@ def dry_run(cfg):
     install.chroot = fake_chroot
     install.subprocess = types.SimpleNamespace(
         run=fake_subprocess_run, DEVNULL=subprocess.DEVNULL,
+        PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+        Popen=fake_popen,
         TimeoutExpired=subprocess.TimeoutExpired)
+    install.run_pacstrap = fake_pacstrap
 
     # Disk helpers that read real hardware.
     disk.partition = lambda d, log=None: (f"{d}p1", f"{d}p2")

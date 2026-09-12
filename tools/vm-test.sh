@@ -115,8 +115,21 @@ if grep -q "LUNAR AUTOINSTALL OK" "$INSTALL_LOG"; then
     ok "installer finished"
 else
     fail "installation did not complete"
-    echo "$dim--- last 60 lines ---$off"
-    tail -60 "$INSTALL_LOG"
+
+    # Say which kind of failure this was. A timeout with no installer output
+    # means something blocked before it ever started, and that is a different
+    # problem from an installer that ran and failed.
+    if grep -q "LUNAR AUTOINSTALL" "$INSTALL_LOG"; then
+        echo "  the installer started and did not finish"
+    else
+        echo "  the installer never started: something blocked earlier in boot"
+    fi
+    if grep -q "terminating on signal 15" "$INSTALL_LOG"; then
+        echo "  the virtual machine was stopped by the ${INSTALL_TIMEOUT}s timeout"
+    fi
+
+    echo "$dim--- last 80 lines ---$off"
+    tail -80 "$INSTALL_LOG"
     echo "$dim--- full log at $INSTALL_LOG ---$off"
     exit 1
 fi
