@@ -35,7 +35,9 @@ cleanup() {
 trap cleanup EXIT
 
 [[ $EUID -eq 0 ]] || { fail "must run as root"; exit 1; }
-for cmd in losetup sgdisk pacstrap arch-chroot lvm mkfs.ext4 mkfs.fat; do
+for cmd in losetup sgdisk partprobe wipefs pacstrap arch-chroot \
+           pvcreate vgcreate lvcreate mkfs.ext4 mkfs.btrfs mkfs.fat \
+           genfstab cryptsetup udevadm; do
     command -v "$cmd" >/dev/null || { fail "$cmd is missing"; exit 1; }
 done
 

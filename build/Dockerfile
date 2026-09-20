@@ -4,6 +4,9 @@
 
 FROM --platform=linux/amd64 archlinux:base-devel
 
+# The container both builds images and installs one to a loop device, so it
+# needs the tools the installer drives as well as the ones archiso needs:
+# partitioning, LVM, encryption, filesystems.
 RUN pacman-key --init && \
     pacman -Syu --noconfirm --needed \
         archiso \
@@ -22,6 +25,13 @@ RUN pacman-key --init && \
         arch-install-scripts \
         erofs-utils \
         squashfs-tools \
+        gptfdisk \
+        parted \
+        lvm2 \
+        cryptsetup \
+        btrfs-progs \
+        e2fsprogs \
+        util-linux \
         libisoburn \
         dosfstools \
         mtools \

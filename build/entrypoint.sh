@@ -301,18 +301,15 @@ cmd_install_test() {
 
     # The installer has to be on PATH for the test to invoke it the way a
     # live medium would.
-    log "Installing lunaros-setup into the container"
-    ( cd "$WORK/lunar-setup" && python -m pip install --quiet --break-system-packages . ) \
-        || { cd "$WORK/lunar-setup" && python -m installer --destdir=/ dist/*.whl 2>/dev/null; } \
-        || true
-
-    if ! command -v lunaros-setup >/dev/null; then
-        # Fall back to running it from the source tree.
-        install -Dm755 /dev/stdin /usr/local/bin/lunaros-setup <<'WRAP'
+    # Arch's python ships no pip, and installing a wheel just to run the
+    # module is indirection with nothing to gain. Point a wrapper at the
+    # source tree: it is the same code the package would install.
+    log "Making lunaros-setup available"
+    install -Dm755 /dev/stdin /usr/local/bin/lunaros-setup <<WRAP
 #!/usr/bin/env bash
-cd /build/src/lunar-setup && exec python -m lunar_setup "$@"
+cd $WORK/lunar-setup && exec python -m lunar_setup "\$@"
 WRAP
-    fi
+    command -v lunaros-setup >/dev/null || { echo "lunaros-setup not on PATH" >&2; exit 1; }
 
     log "Copying the built packages where the installer expects them"
     mkdir -p /var/lib/lunar/repo
