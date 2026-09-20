@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Install Lunar OS in a virtual machine and check the result actually boots.
+# Install Lunar OS in a virtual machine, from the ISO, and check the result
+# boots. This exercises the live medium end to end - the boot entries, the
+# autoinstall unit, the whole path a real user takes.
+#
+# It is NOT what runs in the build: installing under emulation takes about an
+# hour. The build installs to a loopback disk (tools/install-test.sh) and then
+# boots the result (tools/boot-test.sh), which covers the same ground in a few
+# minutes. Use this one when you want to test the medium itself.
 #
 # This is the test that has been missing. Every failure so far - a package
 # that was never built, a disk held by a previous run, a prompt nobody could

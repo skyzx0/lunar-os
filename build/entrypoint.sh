@@ -293,6 +293,35 @@ for d in DESKTOPS:
 "
 }
 
+# Installs to a loopback disk inside this container. Minutes, and it runs the
+# real installer rather than a mock of it.
+cmd_install_test() {
+    sync_source
+    wire_local_repo
+
+    # The installer has to be on PATH for the test to invoke it the way a
+    # live medium would.
+    log "Installing lunaros-setup into the container"
+    ( cd "$WORK/lunar-setup" && python -m pip install --quiet --break-system-packages . ) \
+        || { cd "$WORK/lunar-setup" && python -m installer --destdir=/ dist/*.whl 2>/dev/null; } \
+        || true
+
+    if ! command -v lunaros-setup >/dev/null; then
+        # Fall back to running it from the source tree.
+        install -Dm755 /dev/stdin /usr/local/bin/lunaros-setup <<'WRAP'
+#!/usr/bin/env bash
+cd /build/src/lunar-setup && exec python -m lunar_setup "$@"
+WRAP
+    fi
+
+    log "Copying the built packages where the installer expects them"
+    mkdir -p /var/lib/lunar/repo
+    cp "$WORK/repo/out/lunar/os/x86_64"/* /var/lib/lunar/repo/ 2>/dev/null || true
+    printf 'Optional TrustAll\n' > /var/lib/lunar/repo/.siglevel
+
+    bash "$WORK/tools/install-test.sh" "${1:-20}"
+}
+
 cmd_shell() {
     sync_source
     cd "$WORK"
@@ -309,13 +338,14 @@ preflight
 case "${1:-help}" in
     repo)  cmd_repo ;;
     repo-unsigned) cmd_repo_unsigned ;;
+    install-test)  shift; cmd_install_test "$@" ;;
     iso)   cmd_iso ;;
     check) cmd_check ;;
     shell) cmd_shell ;;
     clean) cmd_clean ;;
     *)
         cat <<'MSG'
-entrypoint commands: repo | repo-unsigned | iso | check | shell | clean
+entrypoint commands: repo | repo-unsigned | iso | install-test | check | shell | clean
 Invoke from macOS with build/mac.sh instead of calling this directly.
 MSG
         ;;

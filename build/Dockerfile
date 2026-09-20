@@ -25,7 +25,8 @@ RUN pacman-key --init && \
         libisoburn \
         dosfstools \
         mtools \
-        edk2-ovmf && \
+        edk2-ovmf \
+        qemu-img && \
     pacman -Scc --noconfirm
 
 # makepkg refuses to run as root, so packages are built as an unprivileged

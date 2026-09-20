@@ -15,13 +15,41 @@ In the build, before the ISO is published:
 | `tests/test_installer.py` | a crash in the installer's own error handling |
 | `tests/test_install_dryrun.py` | wrong ordering, packages that are never built |
 | `tools/check-packages.py` | package names that no longer exist upstream |
-| `tools/vm-test.sh` | everything else |
+| `tools/install-test.sh` | the installer, run for real against a loop device |
+| `tools/boot-test.sh` | whether what it produced actually boots |
+| `tools/vm-test.sh` | the live medium end to end (manual: takes about an hour) |
 
-The first four take about a second between them. The last takes ten to twenty
-minutes and is the one that matters: it performs a real installation and then
-boots what was installed.
+The first four take about a second between them. The install test takes a few
+minutes and is the one that matters: it runs the real installer against a
+loopback disk, then the boot test starts the disk it produced.
 
-## The VM test
+**Why a loop device rather than a virtual machine.** The installer needs a
+block device, not a machine. A loop device is one, so partitioning, LVM,
+filesystems, `pacstrap`, the chroot configuration and the boot loader all run
+for real, in the container, in minutes. Installing inside an emulated machine
+covered the same ground and took an hour, which is long enough that nobody
+runs it and bugs reach hardware instead.
+
+## The install test
+
+    tools/install-test.sh 20        # inside the build container
+
+Creates a sparse image, attaches it with `losetup -P` so partitions appear as
+`/dev/loop0p1` and `p2` exactly as they would on an NVMe drive, and runs
+`lunaros-setup --unattended` against it. Then it checks the result is a system
+rather than a filled disk: fstab, os-release, the user account, the kernel,
+the unified kernel image, the boot loader.
+
+## The boot test
+
+    tools/boot-test.sh out/lunar-test-disk.qcow2
+
+Boots the disk the install test produced, with UEFI firmware, and waits for a
+login prompt. It also names the failure: nothing bootable, a root that would
+not mount, or a kernel panic are three different problems and the log makes
+them look similar.
+
+## The full medium test
 
     tools/vm-test.sh out/lunar-2026.09.05-x86_64.iso
 

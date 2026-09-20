@@ -69,23 +69,43 @@ jobs:
             lunar-build iso
           df -h / | tail -1
 
-      # The step that has been missing all along. Every failure so far would
-      # have been caught here rather than on real hardware.
-      - name: Install in a VM and boot the result
+      # A real installation, to a loopback disk, inside the build container.
+      # Nothing is emulated - the installer wants a block device and a loop
+      # device is one - so this takes minutes and runs the actual code.
+      - name: Install to a loopback disk
+        timeout-minutes: 30
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
+            lunar-build install-test 20
+          ls -lh out/lunar-test-disk.qcow2
+
+      # Boots the disk the previous step produced. No second installation, so
+      # a minute or two rather than an hour of emulated install.
+      - name: Boot the installed system
+        timeout-minutes: 20
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf libarchive-tools
-          ls -l /dev/kvm 2>/dev/null && echo "KVM available" || echo "no KVM, using TCG (slower)"
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf
+          ls -l /dev/kvm 2>/dev/null && echo "KVM available" || echo "no KVM"
           sudo chmod 666 /dev/kvm 2>/dev/null || true
-          WORK=$PWD/vmtest bash tools/vm-test.sh out/*.iso
+          WORK=$PWD/vmtest bash tools/boot-test.sh out/lunar-test-disk.qcow2
 
-      - name: Upload VM logs on failure
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: vm-logs
-          path: vmtest/*.log
+          name: test-logs
+          path: |
+            vmtest/*.log
+            out/*.log
           retention-days: 5
+          if-no-files-found: ignore
+
+      # The test disk is an artefact of testing, not something to publish.
+      - name: Remove the test disk
+        if: always()
+        run: rm -f out/lunar-test-disk.qcow2 out/lunar-test-disk.img
 
       - name: Checksums
         run: |
