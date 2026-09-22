@@ -128,11 +128,24 @@ else
 fi
 
 # --- check the result is a system, not just a filled disk -----------------
+# archinstall unmounts the target when it finishes, so mount it again here to
+# look inside. The layout is known: partition 1 is the ESP (mounted at /boot,
+# which is where systemd-boot and the unified kernel images live), partition 2
+# is the root.
 
-say "checking what was produced"
+CHECK="$WORK/check"
+mkdir -p "$CHECK"
+udevadm settle --timeout=10 2>/dev/null || true
+sync_loop_nodes 2>/dev/null || true
+
+say "mounting the result to inspect it"
+mount "${LOOP}p2" "$CHECK" || { fail "could not mount the installed root"; exit 1; }
+mkdir -p "$CHECK/boot"
+mount "${LOOP}p1" "$CHECK/boot" || { fail "could not mount the ESP"; exit 1; }
+
 problems=0
 check() {
-    if [[ -e "/mnt/$1" ]]; then
+    if compgen -G "$CHECK/$1" >/dev/null; then
         printf '   %-46s ok\n' "$1"
     else
         printf '   %-46s %sMISSING%s\n' "$1" "$red" "$off"
@@ -140,34 +153,58 @@ check() {
     fi
 }
 
+say "what was produced"
 check etc/fstab
 check etc/hostname
-check etc/os-release
 check etc/passwd
 check etc/pacman.conf
-check etc/machine-id
-check usr/bin/ltxs
-check usr/bin/lunaros-setup
-check boot/vmlinuz-linux-hardened
-check efi/EFI/Linux
-check efi/EFI/systemd/systemd-bootx64.efi
-check etc/systemd/system/display-manager.service 2>/dev/null || true
+check usr/lib/os-release
+check "boot/EFI/Linux/*.efi"
+check boot/EFI/systemd/systemd-bootx64.efi
+check boot/loader/loader.conf
 
-say "the account"
-grep -q '^tester:' /mnt/etc/passwd \
-    && echo "   tester exists" \
-    || { echo "   ${red}tester is missing${off}"; problems=1; }
-
-say "the unified kernel image"
-if compgen -G "/mnt/efi/EFI/Linux/*.efi" >/dev/null; then
-    ls -lh /mnt/efi/EFI/Linux/*.efi | sed 's/^/   /'
+say "identity"
+if grep -q 'Lunar OS' "$CHECK/usr/lib/os-release" 2>/dev/null; then
+    echo "   os-release says Lunar OS"
 else
-    echo "   ${red}no unified kernel image was produced - this would not boot${off}"
+    echo "   ${red}os-release does not name Lunar OS${off}"
     problems=1
 fi
 
+say "the account"
+if grep -q '^tester:' "$CHECK/etc/passwd"; then
+    echo "   tester exists"
+else
+    echo "   ${red}tester is missing${off}"
+    problems=1
+fi
+
+say "first boot"
+if [[ -L "$CHECK/etc/systemd/system/systemd-firstboot.service" ]]; then
+    echo "   systemd-firstboot is masked"
+else
+    echo "   ${red}systemd-firstboot is not masked: first boot would stop and ask questions${off}"
+    problems=1
+fi
+
+say "the unified kernel image"
+ls -lh "$CHECK"/boot/EFI/Linux/*.efi 2>/dev/null | sed 's/^/   /' \
+    || echo "   ${red}none - this would not boot${off}"
+
 say "the kernel command line"
-[[ -f /mnt/etc/kernel/cmdline ]] && sed 's/^/   /' /mnt/etc/kernel/cmdline
+[[ -f "$CHECK/etc/kernel/cmdline" ]] && sed 's/^/   /' "$CHECK/etc/kernel/cmdline"
+
+say "Lunar commands"
+for cmd in ltxs lunarfetch lunar-privacy; do
+    if [[ -x "$CHECK/usr/bin/$cmd" ]]; then
+        printf '   %-16s installed\n' "$cmd"
+    else
+        printf '   %-16s not installed\n' "$cmd"
+    fi
+done
+
+umount "$CHECK/boot" 2>/dev/null
+umount "$CHECK" 2>/dev/null
 
 if (( problems )); then
     fail "the installation finished but the result is incomplete"

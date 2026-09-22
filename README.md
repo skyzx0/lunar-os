@@ -101,6 +101,7 @@ Test the ISO before writing it to hardware:
     docs/BUILD-WINDOWS.md   building from Windows, same
     docs/BUILD-CI.md        building on GitHub Actions or a rented VM
     docs/PERFORMANCE.md     what it actually idles at, and why
+    docs/INSTALLER.md       how it installs, and why through archinstall
     docs/TESTING.md         how an image is verified before release
     tools/vm-test.sh        install in a VM and boot the result
     docs/COMMANDS.md        the Lunar command set

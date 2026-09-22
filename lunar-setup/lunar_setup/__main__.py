@@ -13,7 +13,7 @@ import subprocess
 import time
 import sys
 
-from . import disk, hardening, install, ui
+from . import archinstall_backend, disk, hardening, install, ui
 from .locales import KEYMAPS, LOCALES, TIMEZONES, keymap_labels, x11_for
 from .profiles import DESKTOPS, PROFILES, Config
 
@@ -260,6 +260,7 @@ def wizard(stdscr) -> Config:
 
 
 LOG_PATH = "/tmp/lunar-setup.log"
+ENGINE = "archinstall"
 
 
 def show_failure() -> None:
@@ -347,7 +348,7 @@ def run_install(stdscr, cfg) -> bool:
         emit("")
 
         try:
-            install.install(cfg, emit)
+            installer_for(ENGINE).install(cfg, emit)
         except Exception as exc:                      # noqa: BLE001
             failed = True
             emit("")
@@ -365,6 +366,22 @@ def run_install(stdscr, cfg) -> bool:
     return not failed
 
 
+def installer_for(engine: str):
+    """The module that performs the installation.
+
+    archinstall by default: Arch's own maintained installer, which has already
+    solved the disk, encryption and boot-loader edge cases that the original
+    hand-written engine kept rediscovering. The old engine is kept only for
+    comparison, and is selected explicitly.
+    """
+    if engine == "lunar":
+        return install
+    if not archinstall_backend.archinstall_available():
+        print("archinstall is not available; falling back to the built-in engine.")
+        return install
+    return archinstall_backend
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="lunar-setup")
     ap.add_argument("--unattended", metavar="FILE",
@@ -373,6 +390,9 @@ def main() -> int:
                     help="re-apply the security profile to the running system")
     ap.add_argument("--fast", action="store_true",
                     help="minimal console system, smallest package set")
+    ap.add_argument("--engine", choices=["archinstall", "lunar"],
+                    default="archinstall",
+                    help="installation engine (default: archinstall)")
     ap.add_argument("--last-log", action="store_true",
                     help="print the transcript from the last installation")
     ap.add_argument("--steps", action="store_true",
@@ -380,6 +400,8 @@ def main() -> int:
     ap.add_argument("--memory", action="store_true",
                     help="report current memory use, for checking idle claims")
     args = ap.parse_args()
+    global ENGINE
+    ENGINE = args.engine
 
     # These two are read-only and useful without privileges.
     if args.last_log:
@@ -433,7 +455,7 @@ def main() -> int:
                 except (ValueError, OSError):
                     pass
             try:
-                install.install(cfg, emit)
+                installer_for(args.engine).install(cfg, emit)
             except Exception as exc:                  # noqa: BLE001
                 emit("")
                 emit("Installation failed.")

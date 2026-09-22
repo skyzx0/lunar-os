@@ -23,6 +23,7 @@ RUN pacman-key --init && \
         pacman-contrib \
         sudo \
         arch-install-scripts \
+        archinstall \
         erofs-utils \
         squashfs-tools \
         gptfdisk \

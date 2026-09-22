@@ -16,6 +16,7 @@ python
 lunar-setup
 lunar-keyring
 arch-install-scripts
+archinstall
 reflector
 sudo
 polkit
