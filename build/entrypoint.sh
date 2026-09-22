@@ -17,8 +17,11 @@ log() { printf '\n:: %s\n' "$*"; }
 # Report where a failure happened. Without this a missing binary surfaces as
 # "exit code 127" with no indication of which command, which costs a full
 # build to work out.
-trap 'rc=$?; [[ $rc -eq 0 ]] || printf "\n!! failed at line %s: %s (exit %s)\n" \
-      "$LINENO" "$BASH_COMMAND" "$rc" >&2' ERR
+on_error() {
+    local rc=$?
+    printf "\n!! failed at line %s: %s (exit %s)\n" "$1" "$2" "$rc" >&2
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 
 # Everything this script shells out to. Checked once, up front, so a missing
 # tool is named immediately rather than part way through a build.

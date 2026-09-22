@@ -48,7 +48,14 @@ def fake_curses():
 def run_case(name, installer):
     tmp = tempfile.mkdtemp()
     m.LOG_PATH = str(Path(tmp) / "lunar-setup.log")
-    m.install = types.SimpleNamespace(install=installer)
+    # Patch the engine selector, not a module attribute. run_install asks
+    # installer_for() which engine to use, and on a machine that has
+    # archinstall installed it would otherwise bypass the fake entirely and
+    # run the real installer. That made this test pass or fail depending on
+    # what the machine had installed, rather than on the code.
+    fake = types.SimpleNamespace(install=installer)
+    m.install = fake
+    m.installer_for = lambda engine: fake
 
     fake_curses()
     cfg = Config(disk="/dev/fake", filesystem="ext4", encrypt=False,
