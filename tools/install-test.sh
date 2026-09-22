@@ -24,13 +24,14 @@ fail() { printf '\n%s!!%s %s\n' "$red" "$off" "$*" >&2; }
 ok()   { printf '\n%s ok%s %s\n' "$green" "$off" "$*"; }
 
 LOOP=""
+UDEVD_PID=""
 cleanup() {
-    [[ -n "$LOOP" ]] || return 0
     say "cleaning up"
     swapoff -a 2>/dev/null
     umount -R /mnt 2>/dev/null
     vgchange -an lunar 2>/dev/null
-    losetup -d "$LOOP" 2>/dev/null
+    [[ -n "$LOOP" ]] && losetup -d "$LOOP" 2>/dev/null
+    [[ -n "$UDEVD_PID" ]] && kill "$UDEVD_PID" 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -49,9 +50,49 @@ truncate -s "${SIZE}G" "$IMAGE"
 
 # -P so the kernel creates partition nodes: the installer addresses them as
 # ${disk}p1 and ${disk}p2, exactly as it would on an NVMe drive.
+# The installer's own partition() calls partprobe after sgdisk and expects
+# the resulting /dev/loopNpM nodes to exist, the way they always do on a
+# real boot with udev running. Nothing in this container reacts to the
+# kernel's partition uevents, so start udevd for the duration of the test
+# rather than teaching the installer about a gap that only exists here.
+start_udev() {
+    local bin
+    bin="$(command -v udevd || command -v /usr/lib/systemd/systemd-udevd || true)"
+    if [[ -z "$bin" ]]; then
+        fail "no udev daemon binary found (systemd-udevd or udevd)"
+        return 1
+    fi
+    "$bin" --daemon 2>/dev/null &
+    UDEVD_PID=$!
+    # trigger picks up devices that already existed (the loop control node);
+    # settle waits for the queue this starts to actually drain.
+    udevadm trigger 2>/dev/null || true
+    udevadm settle --timeout=10 2>/dev/null || true
+}
+
+say "starting udev (needed for loop partition device nodes)"
+start_udev || fail "continuing without udev; partition nodes may not appear"
+
 LOOP="$(losetup -P -f --show "$IMAGE")"
 [[ -n "$LOOP" ]] || { fail "could not attach a loop device"; exit 1; }
 say "attached $LOOP"
+udevadm settle --timeout=10 2>/dev/null || true
+
+# Belt and braces: create any node udev still missed by reading the kernel's
+# own partition table directly from sysfs. Cheap, and makes the difference
+# between a real failure and a race that only happens in CI.
+sync_loop_nodes() {
+    local base
+    base="$(basename "$LOOP")"
+    for part in "/sys/class/block/$base"/"$base"p*; do
+        [[ -d "$part" ]] || continue
+        local name maj min
+        name="$(basename "$part")"
+        IFS=: read -r maj min < "$part/dev"
+        [[ -e "/dev/$name" ]] || mknod "/dev/$name" b "$maj" "$min"
+    done
+}
+sync_loop_nodes
 
 # The device manager is not running in a container, so the installer's waits
 # for it return immediately. That is fine; the partitions appear synchronously.
