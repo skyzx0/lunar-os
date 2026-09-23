@@ -24,6 +24,10 @@ RUN pacman-key --init && \
         sudo \
         arch-install-scripts \
         archinstall \
+        pciutils \
+        efibootmgr \
+        libfido2 \
+        wpa_supplicant \
         erofs-utils \
         squashfs-tools \
         gptfdisk \

@@ -17,6 +17,8 @@ lunar-setup
 lunar-keyring
 arch-install-scripts
 archinstall
+libfido2
+wpa_supplicant
 reflector
 sudo
 polkit

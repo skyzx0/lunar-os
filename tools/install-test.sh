@@ -32,6 +32,7 @@ cleanup() {
     vgchange -an lunar 2>/dev/null
     [[ -n "$LOOP" ]] && losetup -d "$LOOP" 2>/dev/null
     [[ -n "$UDEVD_PID" ]] && kill "$UDEVD_PID" 2>/dev/null
+    [[ "${UEFI_SHIM:-0}" == 1 ]] && umount /sys/firmware 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -69,6 +70,24 @@ start_udev() {
     udevadm trigger 2>/dev/null || true
     udevadm settle --timeout=10 2>/dev/null || true
 }
+
+# archinstall installs systemd-boot only if the running system booted through
+# UEFI, which it decides by whether /sys/firmware/efi exists. Whether a CI
+# runner exposes that depends on how the runner itself was booted, which is
+# outside anyone's control. Inside this throwaway container, present a
+# stand-in: a tmpfs over /sys/firmware with the one directory archinstall
+# checks. Firmware variables are not writable, so bootctl falls back to
+# installing without touching NVRAM - which is also the safe thing for a
+# test to do. On a real machine none of this runs.
+UEFI_SHIM=0
+if [[ ! -d /sys/firmware/efi ]]; then
+    say "no UEFI in this container; presenting a stand-in for archinstall"
+    mount -t tmpfs lunar-efi /sys/firmware \
+        && mkdir -p /sys/firmware/efi/efivars \
+        && echo 64 > /sys/firmware/efi/fw_platform_size \
+        && UEFI_SHIM=1
+    [[ -d /sys/firmware/efi ]] || { fail "could not present UEFI; systemd-boot cannot be installed"; exit 1; }
+fi
 
 say "starting udev (needed for loop partition device nodes)"
 start_udev || fail "continuing without udev; partition nodes may not appear"
@@ -161,6 +180,9 @@ check etc/pacman.conf
 check usr/lib/os-release
 check "boot/EFI/Linux/*.efi"
 check boot/EFI/systemd/systemd-bootx64.efi
+# The fallback path firmware boots when it has no entry of its own - which is
+# how a freshly installed disk starts, and how the boot test starts it.
+check boot/EFI/BOOT/BOOTX64.EFI
 check boot/loader/loader.conf
 
 say "identity"

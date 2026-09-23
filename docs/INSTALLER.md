@@ -56,6 +56,36 @@ the hardening twice must change nothing.
 
 Passwords never enter the first file. The test checks that too.
 
+## How the configuration is verified
+
+The example configurations archinstall publishes lag its parser. Building from
+them produced four errors the parser would have rejected or, worse, accepted:
+
+| What the examples show | What archinstall 4 requires | Effect if wrong |
+|---|---|---|
+| `"sector_size": null` | `{"value": 512, "unit": "B"}` | crash before installing |
+| a `Percent` size unit | whole `MiB`; there is no percent unit | crash |
+| partitions without `dev_path` | the key present, even if null | crash |
+| plaintext in `enc_password` | plaintext under `!password` | **installs, then nobody can log in** |
+
+The last one is the dangerous kind: it does not fail. `enc_password` takes an
+already-hashed password and stores it verbatim, so an account ends up with the
+literal plaintext as its "hash". Plaintext belongs under `!password`, which
+archinstall hashes with yescrypt.
+
+These were found by running the generated configuration through archinstall's
+own parser and its `--dry-run` mode against a real loop device - every desktop,
+encrypted and not, ext4 and btrfs, 24 combinations - rather than by reading the
+examples. `tests/test_archinstall_backend.py` now runs every configuration
+through the parser on each build, so the next schema change fails in seconds.
+
+Two further details, also from the source rather than the documentation:
+
+- The root partition's size is computed from the real disk, because archinstall
+  rejects a final partition that runs into the backup GPT header.
+- `parallel_downloads` is read at the top level. Under `pacman_config` it is
+  ignored, and packages download one at a time.
+
 ## The old engine
 
 Still present, selected explicitly:
