@@ -409,7 +409,13 @@ def install(cfg: Config, emit) -> None:
     emit("")
 
     cmd = ["archinstall", "--config", config_path, "--creds", creds_path,
-           "--silent"]
+           "--silent",
+           # Both wait on a running systemd talking to dbus - present on a
+           # real live medium, absent inside a build container. Neither check
+           # affects the installed system: they only pause the installer
+           # until the live session's own clock and keyring have settled.
+           # --offline already skips the equivalent reflector wait.
+           "--skip-ntp", "--skip-wkd"]
 
     # Output streamed, stdin fed from `yes`: the same two properties that the
     # hand-written engine needed and got wrong for weeks. archinstall is
