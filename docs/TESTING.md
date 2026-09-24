@@ -40,6 +40,31 @@ Creates a sparse image, attaches it with `losetup -P` so partitions appear as
 rather than a filled disk: fstab, os-release, the user account, the kernel,
 the unified kernel image, the boot loader.
 
+### Why a container needs help with disks
+
+Three things that work on real hardware do not work in a container, each found
+by running archinstall itself against a loop device rather than by reading:
+
+- **`/dev` is a private tmpfs**, so new partition nodes never appear in it. The
+  workflow shares the host's `/dev`.
+- **Kernel device events only reach the host's network namespace**, so a `udevd`
+  inside the container never records partition UUIDs. The workflow shares the
+  host's `/run/udev`, whose `udevd` does receive them.
+- **archinstall writes a partition table and wipes the new partitions within
+  microseconds**, faster than any background rescan. A `wipefs` shim triggers
+  the rescan itself at that moment; a polling loop was tried and lost the race
+  eight times out of eight.
+
+`tools/shims/lsblk` fills in any partition number or UUID `lsblk` still reports
+as empty, from sysfs and `blkid`. It never changes a field `lsblk` did populate,
+so where udev works it is inert.
+
+With those in place, archinstall was run end to end against a 20 GiB loop
+device: disk wiped, GPT written, FAT32 and ext4 created, root mounted. It
+stopped only at mounting the ESP, because the sandbox it ran in has a kernel
+without FAT32. The install test now checks for FAT32 support first, so that
+case fails immediately with a clear reason.
+
 ## The boot test
 
     tools/boot-test.sh out/lunar-test-disk.qcow2

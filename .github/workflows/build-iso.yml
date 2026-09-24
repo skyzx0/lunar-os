@@ -75,7 +75,15 @@ jobs:
       - name: Install to a loopback disk
         timeout-minutes: 30
         run: |
+          # The host's /dev and udev database, not the container's own.
+          # A container's /dev is a private tmpfs where new partition nodes
+          # never appear, and kernel device events only reach the host's
+          # network namespace, so a udevd inside the container never learns
+          # partition UUIDs - which archinstall reads through lsblk. The
+          # runner's own udevd receives those events; sharing its /dev and
+          # /run/udev is the standard way to run disk tooling in a container.
           docker run --rm --privileged \
+            -v /dev:/dev -v /run/udev:/run/udev \
             -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
             lunar-build install-test 20
           ls -lh out/lunar-test-disk.qcow2

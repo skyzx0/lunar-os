@@ -32,6 +32,7 @@ cleanup() {
     vgchange -an lunar 2>/dev/null
     [[ -n "$LOOP" ]] && losetup -d "$LOOP" 2>/dev/null
     [[ -n "$UDEVD_PID" ]] && kill "$UDEVD_PID" 2>/dev/null
+    [[ -n "$PARTX_POLLER" ]] && kill "$PARTX_POLLER" 2>/dev/null
     [[ "${UEFI_SHIM:-0}" == 1 ]] && umount /sys/firmware 2>/dev/null
 }
 trap cleanup EXIT
@@ -45,6 +46,23 @@ done
 
 mkdir -p "$WORK"
 rm -f "$IMAGE"
+
+# archinstall formats the ESP as FAT32 and mounts it. A kernel without vfat
+# support fails that mount deep into the run with "unknown filesystem type";
+# check here instead, where the reason is obvious.
+modprobe vfat 2>/dev/null || true
+if ! grep -qw vfat /proc/filesystems; then
+    probe_img="$WORK/vfat-probe.img"
+    truncate -s 8M "$probe_img" && mkfs.fat "$probe_img" >/dev/null 2>&1
+    mkdir -p "$WORK/vfat-probe"
+    if mount -o loop "$probe_img" "$WORK/vfat-probe" 2>/dev/null; then
+        umount "$WORK/vfat-probe"
+    else
+        fail "this kernel cannot mount FAT32, which the EFI partition needs"
+        exit 1
+    fi
+    rm -f "$probe_img"
+fi
 
 say "creating a ${SIZE} GiB image"
 truncate -s "${SIZE}G" "$IMAGE"
@@ -89,29 +107,77 @@ if [[ ! -d /sys/firmware/efi ]]; then
     [[ -d /sys/firmware/efi ]] || { fail "could not present UEFI; systemd-boot cannot be installed"; exit 1; }
 fi
 
-say "starting udev (needed for loop partition device nodes)"
-start_udev || fail "continuing without udev; partition nodes may not appear"
+# Prefer the host's udevd, shared in through /run/udev. It receives kernel
+# device events; one started inside this container would not, because those
+# events are delivered only to the host's network namespace. Start our own
+# only when no udevd is reachable at all, as a last resort.
+if udevadm control --ping 2>/dev/null; then
+    say "using the host's udev"
+else
+    say "no reachable udev; starting one (partition UUIDs may be missing)"
+    start_udev || fail "continuing without udev"
+fi
 
 LOOP="$(losetup -P -f --show "$IMAGE")"
 [[ -n "$LOOP" ]] || { fail "could not attach a loop device"; exit 1; }
 say "attached $LOOP"
 udevadm settle --timeout=10 2>/dev/null || true
 
-# Belt and braces: create any node udev still missed by reading the kernel's
-# own partition table directly from sysfs. Cheap, and makes the difference
-# between a real failure and a race that only happens in CI.
-sync_loop_nodes() {
-    local base
-    base="$(basename "$LOOP")"
-    for part in "/sys/class/block/$base"/"$base"p*; do
-        [[ -d "$part" ]] || continue
-        local name maj min
-        name="$(basename "$part")"
-        IFS=: read -r maj min < "$part/dev"
-        [[ -e "/dev/$name" ]] || mknod "/dev/$name" b "$maj" "$min"
+# archinstall repartitions the disk itself, mid-install, then wipes the new
+# partitions' signatures immediately - with no pause in between. On a loop
+# device nothing tells the kernel to re-read the partition table, so the
+# /dev/loopNpM node does not exist yet and wipefs fails with "No such file or
+# directory". That is the failure this handles.
+#
+# Two things that looked like fixes and were not, both tested:
+#   - udev alone: there is no event for it to react to until something asks
+#     the kernel to rescan.
+#   - a background loop running `partx -u`: archinstall calls wipefs within
+#     microseconds of writing the table, faster than any polling interval.
+#     Eight attempts, eight failures.
+#
+# What works is doing the rescan at the moment it is needed: a wipefs on PATH
+# ahead of the real one which, if its target does not exist yet, runs
+# `partx -u` on the parent disk and waits for the node before handing over.
+# Eight attempts, eight clean wipes. archinstall finds binaries with
+# shutil.which, so a wrapper earlier on PATH is what it runs. This applies
+# only inside the test; a live medium has udev and a real disk.
+SHIMS="$WORK/shims"
+mkdir -p "$SHIMS"
+cat > "$SHIMS/wipefs" <<'SHIM'
+#!/usr/bin/env bash
+real="$(PATH=/usr/sbin:/usr/bin:/sbin:/bin command -v -- wipefs)"
+target="${*: -1}"
+if [[ "$target" == /dev/* && ! -e "$target" ]]; then
+    parent="$(printf '%s' "$target" | sed -E 's/p?[0-9]+$//')"
+    name="$(basename "$target")"
+    for _ in $(seq 1 150); do
+        partx -u "$parent" 2>/dev/null
+        [[ -e "$target" ]] && break
+        # Where /dev is not the kernel's devtmpfs, the kernel knows the
+        # partition but nothing creates its node; do it from sysfs.
+        if [[ -r "/sys/class/block/$name/dev" ]]; then
+            IFS=: read -r maj min < "/sys/class/block/$name/dev"
+            mknod "$target" b "$maj" "$min" 2>/dev/null
+            [[ -e "$target" ]] && break
+        fi
+        sleep 0.02
     done
-}
-sync_loop_nodes
+fi
+exec "$real" "$@"
+SHIM
+chmod +x "$SHIMS/wipefs"
+
+# lsblk takes partition numbers and UUIDs from udev's database. Where udev
+# cannot see kernel events - a container, unless it shares the host's udev -
+# those come back empty and archinstall stops with "Unable to determine new
+# partition number". The shim runs the real lsblk and fills only the empty
+# fields from sysfs and blkid; where udev works, it changes nothing.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+install -m755 "$SCRIPT_DIR/shims/lsblk" "$SHIMS/lsblk"
+
+export PATH="$SHIMS:$PATH"
+PARTX_POLLER=""
 
 # The device manager is not running in a container, so the installer's waits
 # for it return immediately. That is fine; the partitions appear synchronously.
@@ -155,7 +221,7 @@ fi
 CHECK="$WORK/check"
 mkdir -p "$CHECK"
 udevadm settle --timeout=10 2>/dev/null || true
-sync_loop_nodes 2>/dev/null || true
+partx -u "$LOOP" 2>/dev/null || true
 
 say "mounting the result to inspect it"
 mount "${LOOP}p2" "$CHECK" || { fail "could not mount the installed root"; exit 1; }
