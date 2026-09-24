@@ -329,7 +329,17 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
         "network_config": {"type": "nm"},
         "no_pkg_lookups": False,
         "ntp": True,
-        "offline": False,
+        # True unconditionally. This only skips archinstall's own network
+        # conveniences - a wifi prompt, a version check, and fetching Arch's
+        # mirror-status JSON to re-rank mirrors - none of which the install
+        # depends on: connectivity is checked before this runs (see
+        # require_network in install(), reused from the older engine), and
+        # the mirrorlist is already ranked by ensure_mirrors(). Left False,
+        # a later step calls `systemctl show` to wait on reflector.service,
+        # which needs a running systemd talking to dbus. A live medium has
+        # that; a container building and testing the image does not, and
+        # archinstall does not fail gracefully when it is missing.
+        "offline": True,
         "packages": extra_packages(cfg),
         # Top level: archinstall 4 ignores it under pacman_config and
         # silently downloads one package at a time.
@@ -391,6 +401,15 @@ def install(cfg: Config, emit) -> None:
             "archinstall is not installed on this medium.\n"
             "  It is the installation engine; the medium cannot install\n"
             "  without it.")
+
+    # Checked here rather than left to archinstall's own online check, which
+    # the offline=True setting above disables. Before anything destructive:
+    # finding out there is no network after the disk has been erased leaves a
+    # machine that neither boots its old system nor has a new one.
+    from .install import require_network
+    emit("Checking the connection", accent=True)
+    require_network(log=emit)
+    emit("  mirrors reachable")
 
     workdir = tempfile.mkdtemp(prefix="lunar-archinstall-")
     config_path = os.path.join(workdir, "user_configuration.json")
