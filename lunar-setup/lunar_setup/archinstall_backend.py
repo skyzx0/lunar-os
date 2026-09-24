@@ -429,12 +429,20 @@ def install(cfg: Config, emit) -> None:
 
     cmd = ["archinstall", "--config", config_path, "--creds", creds_path,
            "--silent",
-           # Both wait on a running systemd talking to dbus - present on a
-           # real live medium, absent inside a build container. Neither check
-           # affects the installed system: they only pause the installer
-           # until the live session's own clock and keyring have settled.
-           # --offline already skips the equivalent reflector wait.
-           "--skip-ntp", "--skip-wkd"]
+           # All three wait on a running systemd talking to dbus - present on
+           # a real live medium, absent inside a build container. None of
+           # them affect the installed system; they only pause the installer
+           # until the live session's own clock, keyring sync and reflector
+           # run have settled.
+           #
+           # --offline has to be a command-line flag, not only the "offline"
+           # key already set in the JSON config above. archinstall reads
+           # this particular gate from args.offline - the argparse namespace
+           # built from the CLI - never from the parsed config object, so the
+           # JSON key alone does nothing here. Confirmed by grepping
+           # archinstall's own source for anywhere it reads the config
+           # object's offline field for this check: nowhere does.
+           "--offline", "--skip-ntp", "--skip-wkd"]
 
     # Output streamed, stdin fed from `yes`: the same two properties that the
     # hand-written engine needed and got wrong for weeks. archinstall is

@@ -142,3 +142,48 @@ else:
                     "password stored verbatim instead of hashed"
                 parsed += 1
     print(f"archinstall's parser accepts all {parsed} configurations")
+
+
+# --- --offline must be a real CLI flag, not only a JSON key -----------------
+# archinstall's _verify_service_stop() gate is read from args.offline, the
+# argparse namespace built from the command line, never from the parsed
+# config object. Setting "offline": true in the JSON file alone does nothing
+# for this check - confirmed by grepping archinstall's own source, which has
+# no reader for config.offline anywhere. This shipped once with only the
+# JSON key set and failed in CI with a dbus error the JSON key looked like it
+# should have prevented.
+
+import unittest.mock as _mock
+
+_calls = []
+
+
+def _fake_popen(cmd, **kw):
+    _calls.append(cmd)
+    m = _mock.MagicMock()
+    if cmd and cmd[0] == "yes":
+        m.stdout = _mock.MagicMock()
+    else:
+        m.stdout = iter([])
+        m.wait.return_value = 0
+    return m
+
+
+# subprocess.run is implemented on top of subprocess.Popen, so mocking Popen
+# globally also breaks disk_bytes()'s own subprocess.run calls before the
+# code under test is even reached. Give it a fixed size directly instead.
+with _mock.patch.object(ab, "disk_bytes", return_value=SIZE), \
+     _mock.patch("subprocess.Popen", side_effect=_fake_popen):
+    _cfg = Config(disk="/dev/vda", username="u", user_password="p")
+    try:
+        ab.install(_cfg, lambda m, accent=False: None)
+    except Exception:
+        pass  # only the argv passed to archinstall matters here
+
+archinstall_calls = [c for c in _calls if c and c[0] == "archinstall"]
+assert archinstall_calls, "archinstall was never invoked"
+assert "--offline" in archinstall_calls[0], (
+    "the JSON 'offline' key is set but --offline is missing from argv; "
+    "archinstall reads this gate from args.offline (CLI only) and will "
+    "not honour the JSON key")
+print("--offline is present on the actual command line")
