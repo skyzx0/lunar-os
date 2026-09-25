@@ -59,6 +59,19 @@ by running archinstall itself against a loop device rather than by reading:
 as empty, from sysfs and `blkid`. It never changes a field `lsblk` did populate,
 so where udev works it is inert.
 
+**systemd client tools** (`timedatectl`, `systemctl show`, `localectl`) refuse
+to run at all without `/run/systemd/system` present, and archinstall calls
+all three directly on this container during a normal install - waiting for
+clock sync, checking reflector.service, validating the chosen keyboard
+layout. None of that has anything to do with the target being installed; it
+is systemd detecting whether it is itself running as PID 1, which in a
+container it never is. The install test creates that marker and starts a
+plain `dbus-daemon --system` for the run, which is enough for tools that only
+need the bus to exist. `localectl`'s two queries need an actual service
+(systemd-localed) registered on that bus to answer them, which a bare
+dbus-daemon does not provide, so `tools/shims/localectl` answers the same two
+read-only queries directly from the keymap and XKB files on disk instead.
+
 With those in place, archinstall was run end to end against a 20 GiB loop
 device: disk wiped, GPT written, FAT32 and ext4 created, root mounted. It
 stopped only at mounting the ESP, because the sandbox it ran in has a kernel

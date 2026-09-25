@@ -28,6 +28,13 @@ RUN pacman-key --init && \
         efibootmgr \
         libfido2 \
         wpa_supplicant \
+        # kbd provides /usr/share/kbd/keymaps. archinstall's own installer
+        # calls localectl on this container (not the target) to validate the
+        # chosen keymap before writing it, and localectl fails outright
+        # without this directory - a different error from the dbus problem
+        # below, easy to mistake for the same thing.
+        kbd \
+        dbus \
         erofs-utils \
         squashfs-tools \
         gptfdisk \

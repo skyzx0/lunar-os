@@ -32,6 +32,7 @@ cleanup() {
     vgchange -an lunar 2>/dev/null
     [[ -n "$LOOP" ]] && losetup -d "$LOOP" 2>/dev/null
     [[ -n "$UDEVD_PID" ]] && kill "$UDEVD_PID" 2>/dev/null
+    [[ -f /run/dbus/pid ]] && kill "$(cat /run/dbus/pid)" 2>/dev/null
     [[ -n "$PARTX_POLLER" ]] && kill "$PARTX_POLLER" 2>/dev/null
     [[ "${UEFI_SHIM:-0}" == 1 ]] && umount /sys/firmware 2>/dev/null
 }
@@ -89,6 +90,37 @@ start_udev() {
     udevadm settle --timeout=10 2>/dev/null || true
 }
 
+# archinstall calls several systemd client tools directly on this container -
+# timedatectl waiting for clock sync, systemctl checking on reflector.service,
+# localectl validating the chosen keymap - each failing the same way: "System
+# has not been booted with systemd as init system" or "Failed to connect to
+# system scope bus". Three different call sites, three different failures
+# across four rounds of chasing this, because they were patched one at a
+# time with the skip flags archinstall happens to expose (--offline,
+# --skip-ntp, --skip-wkd). localectl's keymap check has no such flag, and
+# there is no guarantee it is the last one that does not.
+#
+# Both messages trace to the same two missing things, neither related to the
+# flags above: systemd client tools refuse to run at all unless
+# /run/systemd/system exists (their sd_booted() check, tested directly - it
+# is checked before anything touches the bus), and even past that they need
+# an actual system bus to talk to. This container has neither, because
+# nothing here runs systemd as PID 1. Providing both closes every call of
+# this shape at once, present or future, rather than special-casing each one
+# archinstall happens to hit.
+start_dbus() {
+    mkdir -p /run/systemd/system /run/dbus
+    command -v dbus-daemon >/dev/null || { fail "dbus-daemon is missing"; return 1; }
+    rm -f /run/dbus/pid /run/dbus/system_bus_socket
+    dbus-daemon --system --fork
+    for _ in $(seq 1 20); do
+        [[ -S /run/dbus/system_bus_socket ]] && return 0
+        sleep 0.1
+    done
+    fail "dbus-daemon did not create its socket in time"
+    return 1
+}
+
 # archinstall installs systemd-boot only if the running system booted through
 # UEFI, which it decides by whether /sys/firmware/efi exists. Whether a CI
 # runner exposes that depends on how the runner itself was booted, which is
@@ -117,6 +149,9 @@ else
     say "no reachable udev; starting one (partition UUIDs may be missing)"
     start_udev || fail "continuing without udev"
 fi
+
+say "starting a system D-Bus (needed by timedatectl/localectl/systemctl)"
+start_dbus || fail "continuing without dbus; some archinstall checks may fail"
 
 LOOP="$(losetup -P -f --show "$IMAGE")"
 [[ -n "$LOOP" ]] || { fail "could not attach a loop device"; exit 1; }
@@ -175,6 +210,12 @@ chmod +x "$SHIMS/wipefs"
 # fields from sysfs and blkid; where udev works, it changes nothing.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -m755 "$SCRIPT_DIR/shims/lsblk" "$SHIMS/lsblk"
+
+# localectl's keyboard-layout queries route through systemd-localed over
+# D-Bus, which the plain dbus-daemon above does not provide (it is a bus,
+# not the service registered on it). This answers the same two read-only
+# queries directly from disk.
+install -m755 "$SCRIPT_DIR/shims/localectl" "$SHIMS/localectl"
 
 export PATH="$SHIMS:$PATH"
 PARTX_POLLER=""
