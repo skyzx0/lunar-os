@@ -205,3 +205,17 @@ assert "Installer.set_keyboard_language" in wrapper_src, (
     "the archinstall wrapper no longer patches set_keyboard_language; "
     "its temporary-boot step will run again")
 print("the wrapper disables the nspawn boot step")
+
+# Every command inside the target - locale-gen, mkinitcpio, bootctl install -
+# goes through arch-chroot, which gives the target its own /run, isolated
+# from the container's. Without this, each of those fails independently,
+# usually with no readable error text at all (bootctl's failure carried
+# none). Bind-mounting the same dbus socket into the target fixes all of
+# them at once.
+assert "Installer.run_command" in wrapper_src, (
+    "the archinstall wrapper no longer patches run_command; every "
+    "arch-chroot'd command (locale-gen, mkinitcpio, bootctl) will fail "
+    "again with no working dbus inside the target")
+assert "mount" in wrapper_src and "system_bus_socket" in wrapper_src, (
+    "the wrapper no longer bind-mounts the dbus socket into the target")
+print("the wrapper bind-mounts dbus into the chroot target")
