@@ -180,10 +180,28 @@ with _mock.patch.object(ab, "disk_bytes", return_value=SIZE), \
     except Exception:
         pass  # only the argv passed to archinstall matters here
 
-archinstall_calls = [c for c in _calls if c and c[0] == "archinstall"]
+# archinstall now runs through a small wrapper (python3 <wrapper.py> ...)
+# rather than the bare binary, so it can monkeypatch
+# Installer.set_keyboard_language before anything imports it - see below.
+# The wrapper is always argv[1] when present.
+archinstall_calls = [c for c in _calls
+                     if c and (c[0] == "archinstall"
+                               or (len(c) > 1 and "run_archinstall.py" in str(c[1])))]
 assert archinstall_calls, "archinstall was never invoked"
 assert "--offline" in archinstall_calls[0], (
     "the JSON 'offline' key is set but --offline is missing from argv; "
     "archinstall reads this gate from args.offline (CLI only) and will "
     "not honour the JSON key")
 print("--offline is present on the actual command line")
+
+# The wrapper must actually contain the patch, not just exist. This is what
+# stops archinstall's own console-keyboard step from attempting a temporary
+# systemd-nspawn boot of the target - a real container boot with no working
+# stack in a build container, which does not fail cleanly: it produced
+# gigabytes of boot console output before finally failing.
+wrapper_path = archinstall_calls[0][1]
+wrapper_src = open(wrapper_path).read()
+assert "Installer.set_keyboard_language" in wrapper_src, (
+    "the archinstall wrapper no longer patches set_keyboard_language; "
+    "its temporary-boot step will run again")
+print("the wrapper disables the nspawn boot step")

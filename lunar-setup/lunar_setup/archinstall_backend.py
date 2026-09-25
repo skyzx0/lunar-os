@@ -262,6 +262,22 @@ def lunar_layer(cfg: Config) -> list:
     cmds.append(
         "plymouth-set-default-theme lunar 2>/dev/null || true")
 
+    # The X11 side of the keyboard layout. archinstall's own installer can
+    # propagate this live via a temporary systemd-nspawn boot of the target,
+    # but that needs a real container-boot stack this build environment does
+    # not have, and - unlike everything else in this list - degrades badly
+    # rather than gracefully: it produces gigabytes of boot console output
+    # before failing. The console side is unaffected either way; archinstall
+    # writes /etc/vconsole.conf directly, unconditionally, before that step
+    # ever runs.
+    cmds.append(
+        "mkdir -p /etc/X11/xorg.conf.d && "
+        f"printf 'Section \"InputClass\"\n"
+        f"        Identifier \"keyboard\"\n"
+        f"        MatchIsKeyboard \"on\"\n"
+        f"        Option \"XkbLayout\" \"{cfg.keymap}\"\n"
+        f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
+
     return cmds
 
 
@@ -422,12 +438,36 @@ def install(cfg: Config, emit) -> None:
     with os.fdopen(fd, "w") as fh:
         json.dump(build_credentials(cfg), fh, indent=2)
 
+    # archinstall's own console-keyboard step can try to live-propagate the
+    # X11 side by booting the target with systemd-nspawn - a real container
+    # boot, which a build environment has no working stack for. Unlike the
+    # dbus-only calls fixed above, that one does not fail cleanly: it reads
+    # a boot console in a loop, so the failure is gigabytes of output rather
+    # than a clean error. The console side is unaffected: archinstall's
+    # set_vconsole() writes /etc/vconsole.conf from the same value directly,
+    # unconditionally, before this method ever runs. The X11 side is set
+    # directly in the Lunar layer above instead of through this mechanism.
+    #
+    # archinstall runs as a separate process, so this cannot be patched from
+    # here directly; a tiny wrapper does the patch and then runs archinstall
+    # itself, in the same process, so the patch applies before anything else
+    # imports or calls it.
+    wrapper_path = os.path.join(workdir, "run_archinstall.py")
+    with open(wrapper_path, "w") as fh:
+        fh.write(
+            "import sys\n"
+            "from archinstall.lib.installer import Installer\n"
+            "Installer.set_keyboard_language = lambda self, language: True\n"
+            "from archinstall.main import main\n"
+            "sys.exit(main())\n"
+        )
+
     emit("Installing with archinstall", accent=True)
     emit(f"  target {cfg.disk}   desktop {cfg.desktop}   profile {cfg.profile}")
     emit(f"  configuration {config_path}")
     emit("")
 
-    cmd = ["archinstall", "--config", config_path, "--creds", creds_path,
+    cmd = ["python3", wrapper_path, "--config", config_path, "--creds", creds_path,
            "--silent",
            # All three wait on a running systemd talking to dbus - present on
            # a real live medium, absent inside a build container. None of
