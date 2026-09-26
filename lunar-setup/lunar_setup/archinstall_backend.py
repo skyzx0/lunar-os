@@ -186,6 +186,23 @@ def disk_config(cfg: Config, size_bytes: int = None) -> dict:
 # Lunar's own layer, run inside the installed system
 
 
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+
+
+def write_asset_cmd(name: str, dest: str, mode: str = "644") -> str:
+    """A command that writes one of the bundled files into the target.
+
+    archinstall runs these inside the installed system, which cannot see the
+    install medium, so the file travels inside the command itself. base64
+    keeps any quotes or $ in the file from being read by the shell.
+    """
+    import base64
+    with open(os.path.join(ASSETS, name), "rb") as fh:
+        blob = base64.b64encode(fh.read()).decode()
+    return (f"mkdir -p {os.path.dirname(dest)} && "
+            f"printf '%s' '{blob}' | base64 -d > {dest} && chmod {mode} {dest}")
+
+
 def kernel_hardening(cfg: Config) -> list:
     """Kernel parameters Lunar adds on top of what archinstall sets.
 
@@ -220,10 +237,11 @@ def lunar_layer(cfg: Config) -> list:
     """
     p = cfg.profile_obj()
     cmds = [
-        # Identity. os-release is what every tool reads to name the system.
-        "printf 'NAME=\"Lunar OS\"\\nPRETTY_NAME=\"Lunar OS\"\\nID=lunar\\n"
-        "ID_LIKE=arch\\nBUILD_ID=rolling\\nANSI_COLOR=\"0;36\"\\n"
-        "HOME_URL=\"https://lunaros.org\"\\nLOGO=lunar\\n' > /usr/lib/os-release",
+        # Identity: the OS name every tool reads, the login banner, and the
+        # package command. Shared with the live ISO (lunar_setup/assets).
+        write_asset_cmd("os-release", "/usr/lib/os-release"),
+        write_asset_cmd("issue", "/etc/issue"),
+        write_asset_cmd("ltxs", "/usr/local/bin/ltxs", "755"),
 
         # Keep a package update from restoring the vendor os-release.
         "grep -q '^NoUpgrade.*os-release' /etc/pacman.conf || "
@@ -253,14 +271,10 @@ def lunar_layer(cfg: Config) -> list:
         f"for p in {params}; do "
         "grep -qw \"$p\" /etc/kernel/cmdline || "
         "sed -i \"s|$| $p|\" /etc/kernel/cmdline; "
-        "done; mkinitcpio -P || true; fi")
+        "done; fi")
 
     if cfg.spoof_network:
         cmds.append("systemctl enable lunar-spoof.service || true")
-
-    # Plymouth splash, so boot shows the half moon rather than kernel text.
-    cmds.append(
-        "plymouth-set-default-theme lunar 2>/dev/null || true")
 
     # The X11 side of the keyboard layout. archinstall's own installer can
     # propagate this live via a temporary systemd-nspawn boot of the target,
@@ -277,6 +291,15 @@ def lunar_layer(cfg: Config) -> list:
         f"        MatchIsKeyboard \"on\"\n"
         f"        Option \"XkbLayout\" \"{cfg.keymap}\"\n"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
+
+    # Rebuild the boot images last. archinstall built them before any of the
+    # above ran, so they still carry Arch's os-release: the boot menu title
+    # and the "Welcome to ..." line both come from it. A failure here is
+    # reported but does not abort - the system still boots, with the old
+    # names - since archinstall treats any failed command as a failed install.
+    cmds.append(
+        "mkinitcpio -P || echo 'lunaros-setup: rebuilding the boot images "
+        "failed; the boot menu may still show the old name' >&2")
 
     return cmds
 

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# ltxs - the Lunar OS package command.
+#
+#   ltxs install <pkg>...   install packages
+#   ltxs remove <pkg>...    remove packages and what only they needed
+#   ltxs update             update the whole system
+#   ltxs search <term>      search available packages
+#   ltxs info <pkg>         details about a package
+#   ltxs list               packages you installed yourself
+#   ltxs files <pkg>        files a package installed
+#   ltxs owns <file>        which package a file belongs to
+#   ltxs clean              free space used by old downloads
+#
+# pacman does the work underneath. Its own options still work through ltxs
+# (ltxs -Syu, ltxs -Qi foo), so nothing that knows pacman is lost.
+set -uo pipefail
+
+PM="${LTXS_PACMAN:-/usr/bin/pacman}"
+ARGS=("$@")
+accent=$'\033[38;2;150;160;255m'; dim=$'\033[2m'; off=$'\033[0m'
+
+usage() {
+    cat <<USAGE
+${accent}ltxs${off} ${dim}- Lunar OS packages${off}
+
+  ltxs install <package>...   install
+  ltxs remove <package>...    remove, with what only it needed
+  ltxs update                 update the whole system
+  ltxs search <term>          search available packages
+  ltxs info <package>         details about a package
+  ltxs list                   packages you installed
+  ltxs files <package>        files a package installed
+  ltxs owns <file>            which package owns a file
+  ltxs clean                  remove old downloaded packages
+USAGE
+}
+
+# Commands that change the system re-run themselves through sudo, so
+# "ltxs install foo" works without typing sudo first.
+as_root() {
+    if (( EUID != 0 )); then
+        exec sudo "$0" "${ARGS[@]}"
+    fi
+}
+
+need() {
+    if (( $1 == 0 )); then
+        echo "ltxs $2: name at least one $3" >&2
+        exit 2
+    fi
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    install|add|i)    need $# "$cmd" package; as_root; exec "$PM" -S --needed "$@" ;;
+    remove|rm|r)      need $# "$cmd" package; as_root; exec "$PM" -Rns "$@" ;;
+    update|upgrade|u) as_root; exec "$PM" -Syu "$@" ;;
+    search|s)         need $# "$cmd" "search term"; exec "$PM" -Ss "$@" ;;
+    info)             need $# "$cmd" package
+                      "$PM" -Si "$@" 2>/dev/null || exec "$PM" -Qi "$@" ;;
+    list|ls)          exec "$PM" -Qe "$@" ;;
+    files)            need $# "$cmd" package; exec "$PM" -Ql "$@" ;;
+    owns)             need $# "$cmd" file; exec "$PM" -Qo "$@" ;;
+    clean)            as_root; exec "$PM" -Sc "$@" ;;
+    help|-h|--help)   usage ;;
+    -*)               exec "$PM" "$cmd" "$@" ;;
+    *)                echo "ltxs: unknown command '$cmd'" >&2; echo >&2; usage >&2; exit 2 ;;
+esac

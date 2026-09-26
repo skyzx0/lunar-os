@@ -1,4 +1,8 @@
 # remove from airootfs!
+# Named 10- so it runs before 90-mkinitcpio-install.hook: pacman runs hooks
+# in filename order, and the boot image copies os-release when it is built.
+# Sorting after it (as "lunar-branding.hook" did) built an image that
+# greeted "Welcome to Arch Linux!" at boot.
 # Rename the OS in os-release and the login banner. Both files belong to the
 # 'filesystem' package, so they are rewritten after it installs rather than
 # shipped in airootfs, which would conflict with it.

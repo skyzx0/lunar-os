@@ -11,6 +11,7 @@ set -euo pipefail
 P="$1"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
+ASSETS="$REPO/lunar-setup/lunar_setup/assets"
 A="$P/airootfs"
 say() { printf ':: %s\n' "$*"; }
 
@@ -35,11 +36,12 @@ say "3. Hostname and welcome message"
 echo "lunaros" > "$A/etc/hostname"
 cp "$HERE/motd" "$A/etc/motd"
 
-# 4. OS name in os-release and the login banner.
+# 4. OS name in os-release and the login banner. The hook is numbered 10-
+#    so it runs before the boot image is built from os-release.
 say "4. OS name"
-install -Dm644 "$HERE/os-release" "$A/usr/share/lunaros/os-release"
-install -Dm644 "$HERE/issue" "$A/usr/share/lunaros/issue"
-install -Dm644 "$HERE/lunar-branding.hook" "$A/etc/pacman.d/hooks/lunar-branding.hook"
+install -Dm644 "$ASSETS/os-release" "$A/usr/share/lunaros/os-release"
+install -Dm644 "$ASSETS/issue" "$A/usr/share/lunaros/issue"
+install -Dm644 "$HERE/10-lunar-branding.hook" "$A/etc/pacman.d/hooks/10-lunar-branding.hook"
 
 # 5. The Lunar OS installer.
 say "5. Installer"
@@ -47,5 +49,14 @@ mkdir -p "$A/usr/local/lib/lunaros-setup"
 cp -r "$REPO/lunar-setup/lunar_setup" "$A/usr/local/lib/lunaros-setup/"
 install -Dm755 "$HERE/lunaros-setup" "$A/usr/local/bin/lunaros-setup"
 sed -i 's|^file_permissions=(|file_permissions=(\n  ["/usr/local/bin/lunaros-setup"]="0:0:755"|' "$P/profiledef.sh"
+
+# 6. BIOS boot menu background (Arch's logo otherwise).
+say "6. Boot menu background"
+cp "$HERE/splash.png" "$P/syslinux/splash.png"
+
+# 7. ltxs, the Lunar package command.
+say "7. ltxs"
+install -Dm755 "$ASSETS/ltxs" "$A/usr/local/bin/ltxs"
+sed -i 's|^file_permissions=(|file_permissions=(\n  ["/usr/local/bin/ltxs"]="0:0:755"|' "$P/profiledef.sh"
 
 say "done"
