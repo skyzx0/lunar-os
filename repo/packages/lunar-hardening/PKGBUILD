@@ -15,8 +15,22 @@ sha256sums=('SKIP')
 
 package() {
   cd "$srcdir/lunar-os/hardening"
-  find etc -type f | while read -r f; do
-    install -Dm644 "$f" "$pkgdir/$f"
-  done
-  chmod 700 "$pkgdir/etc/nftables.conf"
+
+  # These files are already provided by the base Arch packages we depend on.
+  # Installing copies of them here creates pacstrap conflicts during installs.
+  local -a skip_files=(
+    'etc/nftables.conf'
+    'etc/security/faillock.conf'
+    'etc/systemd/zram-generator.conf'
+  )
+
+  while IFS= read -r -d '' f; do
+    local rel="${f#"$srcdir/lunar-os/hardening/"}"
+    case " ${skip_files[*]} " in
+      *" $rel "*) continue ;;
+    esac
+    install -Dm644 "$f" "$pkgdir/$rel"
+  done < <(find etc -type f -print0)
+
+  chmod 700 "$pkgdir/etc/nftables.conf" 2>/dev/null || true
 }
