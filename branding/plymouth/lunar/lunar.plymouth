@@ -1,8 +1,0 @@
-[Plymouth Theme]
-Name=Lunar
-Description=Minimal half moon on black
-ModuleName=script
-
-[script]
-ImageDir=/usr/share/plymouth/themes/lunar
-ScriptFile=/usr/share/plymouth/themes/lunar/lunar.script

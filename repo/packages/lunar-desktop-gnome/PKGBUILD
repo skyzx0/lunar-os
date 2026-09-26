@@ -1,9 +1,0 @@
-pkgname=lunar-desktop-gnome
-pkgver=0.1.0
-pkgrel=1
-pkgdesc="GNOME session for Lunar OS"
-arch=('any')
-url="https://lunaros.org"
-license=('GPL3')
-depends=('gnome' 'gdm' 'gnome-tweaks' 'xdg-desktop-portal-gnome'
-        'pipewire' 'pipewire-pulse' 'wireplumber' 'gnome-keyring')

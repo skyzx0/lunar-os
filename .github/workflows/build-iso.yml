@@ -1,191 +1,44 @@
 name: Build ISO
 
-# Manual runs, plus an automatic build whenever a v* tag is pushed.
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Attach the ISO to a GitHub Release'
-        type: boolean
-        default: false
-  push:
-    tags:
-      - 'v*'
 
 permissions:
-  contents: write        # needed only to create the release
+  contents: write
 
 jobs:
   iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
-      # GitHub runners ship with about 21 GiB free on /, and mkarchiso needs
-      # roughly 25 GiB of scratch space. The preinstalled toolchains nobody
-      # here uses are worth about 25 GiB between them.
-      - name: Free disk space
-        run: |
-          echo "Before:"; df -h / | tail -1
-          sudo rm -rf /usr/share/dotnet \
-                      /usr/local/lib/android \
-                      /opt/ghc \
-                      /usr/local/.ghcup \
-                      /usr/local/share/boost \
-                      /usr/local/share/powershell \
-                      /usr/lib/jvm \
-                      "$AGENT_TOOLSDIRECTORY"
-          sudo docker image prune -af
-          sudo apt-get clean
-          echo "After:"; df -h / | tail -1
+      - name: Check the installer compiles
+        run: python3 -m compileall -q lunar-setup/lunar_setup
 
-      - name: Build the build container
-        run: docker build --platform linux/amd64 -t lunar-build build/
-
-      - name: Sanity check
-        run: |
-          docker volume create lunar-build-vol
-          mkdir -p out
-          docker run --rm --privileged \
-            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
-            lunar-build check
-
-      # CI builds are unsigned on purpose. Putting the repository signing key
-      # into Actions secrets would mean a compromised workflow, action or
-      # runner could sign packages your machines install as root. Sign on a
-      # machine you control instead - see docs/BUILD-CI.md.
-      - name: Build packages (unsigned)
-        run: |
-          docker run --rm --privileged \
-            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
-            lunar-build repo-unsigned
-
+      # Arch's own releng profile, from the archiso package that builds it,
+      # with lunar/apply.sh layered on top. Nothing else.
       - name: Build the ISO
         run: |
-          docker run --rm --privileged \
-            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
-            lunar-build iso
-          df -h / | tail -1
+          mkdir -p out
+          docker run --rm --privileged -v "$PWD:/src" -w /src archlinux:latest bash -c '
+            set -euo pipefail
+            pacman -Syu --noconfirm --needed archiso
+            cp -r /usr/share/archiso/configs/releng /tmp/profile
+            bash lunar/apply.sh /tmp/profile
+            mkarchiso -v -w /tmp/work -o /src/out /tmp/profile
+          '
+          sudo chown -R "$(id -u):$(id -g)" out
+          ls -lh out
 
-      # A real installation, to a loopback disk, inside the build container.
-      # Nothing is emulated - the installer wants a block device and a loop
-      # device is one - so this takes minutes and runs the actual code.
-      # Non-blocking. This runs inside a container with no systemd as PID 1,
-      # which a real live medium always has; most failures here have been
-      # that environment gap rather than a fault in the ISO. It still runs,
-      # and a failure is reported below, but it no longer stops the ISO
-      # from being published.
-      - name: Install to a loopback disk
-        id: install
-        continue-on-error: true
-        timeout-minutes: 30
-        run: |
-          # The host's /dev and udev database, not the container's own.
-          # A container's /dev is a private tmpfs where new partition nodes
-          # never appear, and kernel device events only reach the host's
-          # network namespace, so a udevd inside the container never learns
-          # partition UUIDs - which archinstall reads through lsblk. The
-          # runner's own udevd receives those events; sharing its /dev and
-          # /run/udev is the standard way to run disk tooling in a container.
-          docker run --rm --privileged \
-            -v /dev:/dev -v /run/udev:/run/udev \
-            -v "$PWD:/src:ro" -v lunar-build-vol:/build -v "$PWD/out:/out" \
-            lunar-build install-test 20
-          # The container writes the disk as root; the boot step runs as the
-          # runner user, and QEMU opens disks read-write. Without this the
-          # boot test fails before the VM starts: "Permission denied".
-          sudo chown "$(id -u):$(id -g)" out/lunar-test-disk.qcow2
-          ls -lh out/lunar-test-disk.qcow2
+      - name: Checksum
+        run: cd out && sha256sum *.iso > SHA256SUMS && cat SHA256SUMS
 
-      # Boots the disk the previous step produced. No second installation, so
-      # a minute or two rather than an hour of emulated install.
-      - name: Boot the installed system
-        id: boot
-        if: steps.install.outcome == 'success'
-        continue-on-error: true
-        timeout-minutes: 20
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils ovmf
-          ls -l /dev/kvm 2>/dev/null && echo "KVM available" || echo "no KVM"
-          sudo chmod 666 /dev/kvm 2>/dev/null || true
-          WORK=$PWD/vmtest bash tools/boot-test.sh out/lunar-test-disk.qcow2
-
-      - name: Upload logs on failure
-        if: steps.install.outcome == 'failure' || steps.boot.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-logs
-          path: |
-            vmtest/*.log
-            out/*.log
-          retention-days: 5
-          if-no-files-found: ignore
-
-      - name: Report test results
-        if: always()
-        run: |
-          install="${{ steps.install.outcome }}"
-          boot="${{ steps.boot.outcome }}"
-          {
-            echo "### Install test"
-            echo "- loopback install: \`${install:-skipped}\`"
-            echo "- boot of installed disk: \`${boot:-skipped}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$install" == "failure" || "$boot" == "failure" ]]; then
-            echo "::warning title=Install test failed::The ISO was still published. Logs are in the test-logs artifact."
-          fi
-
-      # The test disk is an artefact of testing, not something to publish.
-      - name: Remove the test disk
-        if: always()
-        run: rm -f out/lunar-test-disk.qcow2 out/lunar-test-disk.img
-
-      - name: Checksums
-        run: |
-          cd out
-          sha256sum *.iso > SHA256SUMS
-          cat SHA256SUMS
-          ls -lh *.iso
-
-      # Actions artifact storage is 500 MB on the free plan and an ISO is
-      # several times that, so uploading one exhausts the quota and then
-      # blocks every subsequent build. Releases do not count against it.
-      - name: Publish to a release
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd out
-          tag="build-$(date +%Y%m%d-%H%M)"
-          [ "${GITHUB_REF_TYPE}" = "tag" ] && tag="${GITHUB_REF_NAME}"
-
-          iso=$(ls *.iso)
-          size=$(stat -c%s "$iso")
-          assets="SHA256SUMS"
-
-          # Release assets are capped at 2 GiB each.
-          if [ "$size" -gt 2000000000 ]; then
-            echo "Splitting $iso ($((size / 1024 / 1024)) MiB) for upload"
-            split -b 1900M -d "$iso" "$iso.part"
-            assets="$assets $(ls "$iso".part*)"
-            cat > REASSEMBLE.txt <<'TXT'
-          This ISO exceeded GitHub's 2 GiB per-asset limit and was split.
-
-            cat lunar-*.iso.part* > lunar.iso
-            shasum -a 256 -c SHA256SUMS
-          TXT
-            assets="$assets REASSEMBLE.txt"
-          else
-            assets="$assets $iso"
-          fi
-
-          gh release create "$tag" $assets \
+          tag="build-$(date -u +%Y%m%d-%H%M)"
+          gh release create "$tag" out/*.iso out/SHA256SUMS \
             --title "Lunar OS $tag" \
-            --notes "Unsigned CI build. Verify against SHA256SUMS before use.
-          Packages are not signed - see docs/BUILD-CI.md."
-
-          echo
-          echo "Download with:"
-          echo "  gh release download $tag -D ~/Downloads"
+            --notes "Arch releng profile + Lunar OS branding + lunaros-setup."

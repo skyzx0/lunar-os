@@ -1,0 +1,2 @@
+#!/bin/sh
+PYTHONPATH=/usr/local/lib/lunaros-setup exec python -m lunar_setup "$@"

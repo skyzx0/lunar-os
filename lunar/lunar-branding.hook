@@ -1,0 +1,17 @@
+# remove from airootfs!
+# Rename the OS in os-release and the login banner. Both files belong to the
+# 'filesystem' package, so they are rewritten after it installs rather than
+# shipped in airootfs, which would conflict with it.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/os-release
+Target = etc/issue
+
+[Action]
+Description = Applying Lunar OS branding...
+When = PostTransaction
+Depends = coreutils
+Exec = /bin/sh -c "cp /usr/share/lunaros/os-release /usr/lib/os-release && cp /usr/share/lunaros/issue /etc/issue"

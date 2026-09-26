@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Lunar OS
-Comment=How to install from this session
-Exec=konsole --hide-menubar --hide-tabbar -e lunaros-hello
-Icon=utilities-terminal
-Terminal=false
-X-KDE-autostart-phase=2

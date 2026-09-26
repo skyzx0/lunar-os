@@ -1,5 +1,0 @@
-# mkinitcpio preset for the Lunar OS live medium
-ALL_kver="/boot/vmlinuz-linux-hardened"
-PRESETS=('archiso')
-archiso_config="/etc/mkinitcpio.conf.d/archiso.conf"
-archiso_image="/boot/initramfs-linux-hardened.img"
