@@ -1,0 +1,16 @@
+# /etc/security/faillock.conf is owned by pam and has no drop-in directory,
+# so Lunar's version is carried in /usr/share and copied into place here.
+# pam lists that file in its backup array, so a later pam upgrade leaves the
+# copy alone and writes any new default to faillock.conf.pacnew instead.
+
+_lunar_faillock() {
+    install -Dm644 /usr/share/lunar-hardening/faillock.conf /etc/security/faillock.conf
+}
+
+post_install() {
+    _lunar_faillock
+}
+
+post_upgrade() {
+    _lunar_faillock
+}

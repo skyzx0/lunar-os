@@ -20,7 +20,7 @@
 
 # Security policy
 -w /etc/apparmor.d/ -p wa -k mac
--w /etc/nftables.conf -p wa -k firewall
+-w /etc/lunar/nftables.conf -p wa -k firewall
 -w /etc/sysctl.d/ -p wa -k sysctl
 
 # Privilege escalation actually performed

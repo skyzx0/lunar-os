@@ -278,6 +278,7 @@ cmd_check() {
     cd "$WORK" && python tests/test_installer.py
     cd "$WORK" && python tests/test_install_dryrun.py
     cd "$WORK" && python tests/test_archinstall_backend.py
+    cd "$WORK" && python tests/test_hardening_package.py
 
     log "Verifying package names against the repositories"
     # The one check that cannot be done from a laptop with no Arch mirrors:

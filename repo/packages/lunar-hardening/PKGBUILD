@@ -1,36 +1,30 @@
 pkgname=lunar-hardening
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Baseline hardening configuration for Lunar OS"
 arch=('any')
 url="https://lunaros.org"
 license=('GPL3')
-depends=('apparmor' 'nftables' 'audit')
-optdepends=('hardened_malloc: preloaded allocator, AUR')
+depends=('apparmor' 'nftables' 'audit' 'pam')
+optdepends=('hardened_malloc: preloaded allocator, AUR'
+            'libpwquality: password quality rules in pwquality.conf.d')
 backup=('etc/sysctl.d/99-lunar-hardening.conf'
         'etc/modprobe.d/lunar-blacklist.conf'
-        'etc/nftables.conf')
+        'etc/lunar/nftables.conf')
+install=lunar-hardening.install
 source=("lunar-os-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
+# No file here is owned by another Arch package. Where Arch owns the stock
+# path, Lunar's settings go somewhere the owner reads without conflict:
+#   firewall    /etc/lunar/nftables.conf + nftables.service drop-in
+#   pwquality   /etc/security/pwquality.conf.d/lunar.conf
+#   zram        /etc/systemd/zram-generator.conf.d/lunar.conf
+#   faillock    /usr/share/lunar-hardening/, copied by the install script
 package() {
   cd "$srcdir/lunar-os/hardening"
-
-  # These files are already provided by the base Arch packages we depend on.
-  # Installing copies of them here creates pacstrap conflicts during installs.
-  local -a skip_files=(
-    'etc/nftables.conf'
-    'etc/security/faillock.conf'
-    'etc/systemd/zram-generator.conf'
-  )
-
-  while IFS= read -r -d '' f; do
-    local rel="${f#"$srcdir/lunar-os/hardening/"}"
-    case " ${skip_files[*]} " in
-      *" $rel "*) continue ;;
-    esac
-    install -Dm644 "$f" "$pkgdir/$rel"
-  done < <(find etc -type f -print0)
-
-  chmod 700 "$pkgdir/etc/nftables.conf" 2>/dev/null || true
+  find etc usr -type f | while read -r f; do
+    install -Dm644 "$f" "$pkgdir/$f"
+  done
+  chmod 700 "$pkgdir/etc/lunar/nftables.conf"
 }
