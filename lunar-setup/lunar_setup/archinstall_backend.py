@@ -407,57 +407,17 @@ def build_credentials(cfg: Config) -> dict:
 
 
 WRAPPER_SOURCE = '''\
-import os
-import subprocess
 import sys
-from pathlib import Path
 
 from archinstall.lib.installer import Installer
 
-# The keyboard-layout step above is not the only place archinstall needs a
-# working systemd/dbus: every command it runs inside the target - locale-gen,
-# mkinitcpio, bootctl install - goes through arch-chroot, which gives the
-# target its own /run, isolated from the container\'s. The container-level
-# dbus-daemon and /run/systemd/system marker the test harness sets up are
-# invisible in there, so every one of those commands fails the same way,
-# each with a different, often blank, error message - bootctl\'s failure
-# here carried no readable text at all. Bind-mounting the same socket
-# directly into the target, at the exact path dbus clients default to, fixes
-# all of them at once rather than chasing each command that happens to need
-# a working system bus.
+# set_keyboard_language() boots the target with systemd-nspawn to push the
+# layout to X11 live. That needs a working container-boot stack, which a
+# build environment lacks, and it fails by streaming boot output for
+# gigabytes rather than erroring. The console keymap is unaffected: it is
+# written to /etc/vconsole.conf beforehand by set_vconsole(). The X11 layout
+# is written directly by the Lunar layer instead.
 Installer.set_keyboard_language = lambda self, language: True
-
-_orig_run_command = Installer.run_command
-
-
-def _run_command_with_dbus(self, cmd, peek_output=False):
-    target = Path(self.target)
-    sysd_dir = target / "run" / "systemd" / "system"
-    dbus_dir = target / "run" / "dbus"
-    dbus_sock = dbus_dir / "system_bus_socket"
-    host_sock = Path("/run/dbus/system_bus_socket")
-
-    try:
-        sysd_dir.mkdir(parents=True, exist_ok=True)
-        dbus_dir.mkdir(parents=True, exist_ok=True)
-        # os.path.ismount() is built for directory mount points and is
-        # unreliable for a single-file bind mount; compare device and inode
-        # against the source instead, which is what actually indicates the
-        # mount already happened.
-        already_bound = (dbus_sock.exists()
-                         and os.stat(dbus_sock)[:3] == os.stat(host_sock)[:3]
-                         if host_sock.exists() and dbus_sock.exists() else False)
-        if host_sock.exists() and not already_bound:
-            dbus_sock.touch(exist_ok=True)
-            subprocess.run(["mount", "--bind", str(host_sock), str(dbus_sock)],
-                           check=False, capture_output=True)
-    except OSError:
-        pass  # best-effort: a real install has its own working systemd
-
-    return _orig_run_command(self, cmd, peek_output=peek_output)
-
-
-Installer.run_command = _run_command_with_dbus
 
 from archinstall.main import main
 

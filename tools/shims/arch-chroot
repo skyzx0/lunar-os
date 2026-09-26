@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# arch-chroot, without systemd mode when there is no systemd to use.
+#
+# For test environments only. archinstall hardcodes `arch-chroot -S` at six
+# call sites - every command it runs inside the target (locale-gen,
+# mkinitcpio, bootctl install, chpasswd, the post-install custom commands).
+# -S means "run in systemd mode": arch-chroot hands the command to
+# systemd-run as a transient service, which requires systemd running as PID 1
+# on the host. A build container never has that, so every one of those calls
+# fails with "Failed to start transient service unit", and no amount of D-Bus
+# setup changes it - the bus is not what is missing, the service manager is.
+#
+# Without -S, arch-chroot uses its classic mode: it mounts /proc, /sys, /dev
+# and /run into the target itself and runs chroot directly. That is what
+# every Arch install used before -S existed, and it does not need systemd.
+#
+# Where systemd *is* PID 1 (a real live medium), -S is passed through
+# unchanged, so this changes nothing there.
+
+real="$(PATH=/usr/bin:/usr/sbin:/bin:/sbin command -v arch-chroot)"
+[[ -n "$real" ]] || { echo "arch-chroot shim: real arch-chroot not found" >&2; exit 127; }
+
+if [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]; then
+    exec "$real" "$@"
+fi
+
+# Only arch-chroot's own options, before the chroot directory, are touched.
+# Everything from the directory onward is the command to run inside, where a
+# -S may well be meaningful (pacman -S, for one) and must pass through.
+args=()
+in_opts=1
+expect_value=0
+for a in "$@"; do
+    if (( in_opts )); then
+        if (( expect_value )); then
+            args+=("$a"); expect_value=0; continue
+        fi
+        case "$a" in
+            -S) continue ;;
+            -u) args+=("$a"); expect_value=1; continue ;;
+            -*) args+=("$a"); continue ;;
+            *)  in_opts=0 ;;
+        esac
+    fi
+    args+=("$a")
+done
+exec "$real" "${args[@]}"

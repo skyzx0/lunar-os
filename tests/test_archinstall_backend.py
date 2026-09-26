@@ -206,16 +206,38 @@ assert "Installer.set_keyboard_language" in wrapper_src, (
     "its temporary-boot step will run again")
 print("the wrapper disables the nspawn boot step")
 
-# Every command inside the target - locale-gen, mkinitcpio, bootctl install -
-# goes through arch-chroot, which gives the target its own /run, isolated
-# from the container's. Without this, each of those fails independently,
-# usually with no readable error text at all (bootctl's failure carried
-# none). Bind-mounting the same dbus socket into the target fixes all of
-# them at once.
-assert "Installer.run_command" in wrapper_src, (
-    "the archinstall wrapper no longer patches run_command; every "
-    "arch-chroot'd command (locale-gen, mkinitcpio, bootctl) will fail "
-    "again with no working dbus inside the target")
-assert "mount" in wrapper_src and "system_bus_socket" in wrapper_src, (
-    "the wrapper no longer bind-mounts the dbus socket into the target")
-print("the wrapper bind-mounts dbus into the chroot target")
+# --- the arch-chroot shim ----------------------------------------------------
+# archinstall runs every command inside the target through `arch-chroot -S`,
+# which hands it to systemd-run and needs systemd as PID 1. The build
+# container has none, so the shim drops -S - but only from arch-chroot's own
+# options. A -S inside the chrooted command (pacman -S) must pass through.
+
+import subprocess as _sp
+import tempfile as _tf
+from pathlib import Path as _P
+
+_shim = _P(__file__).resolve().parent.parent / "tools" / "shims" / "arch-chroot"
+_d = _tf.mkdtemp()
+_fake = _P(_d) / "real-arch-chroot"
+_fake.write_text('#!/bin/bash\necho "$*"\n')
+_fake.chmod(0o755)
+_test = _P(_d) / "arch-chroot"
+_test.write_text(_shim.read_text().replace(
+    "PATH=/usr/bin:/usr/sbin:/bin:/sbin command -v arch-chroot", f"echo {_fake}"))
+_test.chmod(0o755)
+
+_is_systemd = open("/proc/1/comm").read().strip() == "systemd"
+_cases = {
+    "-S /mnt bootctl install":        "/mnt bootctl install",
+    "-S /mnt pacman -S --needed foo": "/mnt pacman -S --needed foo",
+    "-u user -S /mnt whoami":         "-u user /mnt whoami",
+    "/mnt mkinitcpio -P":             "/mnt mkinitcpio -P",
+}
+if not _is_systemd:
+    for _args, _want in _cases.items():
+        _got = _sp.run([str(_test), *_args.split()], capture_output=True,
+                       text=True).stdout.strip()
+        assert _got == _want, f"arch-chroot shim: {_args!r} -> {_got!r}, wanted {_want!r}"
+    print("arch-chroot shim drops -S only from its own options")
+else:
+    print("arch-chroot shim test skipped: systemd is PID 1 here, -S passes through")

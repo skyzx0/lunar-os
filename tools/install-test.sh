@@ -217,6 +217,11 @@ install -m755 "$SCRIPT_DIR/shims/lsblk" "$SHIMS/lsblk"
 # queries directly from disk.
 install -m755 "$SCRIPT_DIR/shims/localectl" "$SHIMS/localectl"
 
+# archinstall runs every command inside the target through `arch-chroot -S`,
+# which hands it to systemd-run - impossible without systemd as PID 1. The
+# shim drops -S here, so arch-chroot uses its classic mode instead.
+install -m755 "$SCRIPT_DIR/shims/arch-chroot" "$SHIMS/arch-chroot"
+
 export PATH="$SHIMS:$PATH"
 PARTX_POLLER=""
 
