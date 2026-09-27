@@ -378,6 +378,33 @@ def lunar_layer(cfg: Config) -> list:
                             "/usr/share/sddm/themes/breeze/theme.conf.user"),
         ]
 
+    # Boot splash: the half moon, name and slogan on black while the system
+    # starts, and the passphrase prompt when the disk is encrypted. Needs the
+    # theme, the plymouth hook in the boot image, and "splash" on the kernel
+    # command line; the rebuild below then includes all three.
+    theme = "/usr/share/plymouth/themes/lunar"
+    cmds += [
+        write_asset_cmd("plymouth/lunar.plymouth", f"{theme}/lunar.plymouth"),
+        write_asset_cmd("plymouth/lunar.script", f"{theme}/lunar.script"),
+        write_asset_cmd("plymouth/moon.png", f"{theme}/moon.png"),
+        write_asset_cmd("plymouth/dot-0.png", f"{theme}/dot-0.png"),
+        "plymouth-set-default-theme lunar || true",
+        # After systemd or udev, whichever archinstall chose, so it starts
+        # before the encryption prompt. Only if the hook is actually there:
+        # naming a missing hook would make the boot-image rebuild fail.
+        "if [ -f /usr/lib/initcpio/install/plymouth ]; then "
+        "sed -i -E '/^HOOKS=/{/[( ]plymouth[ )]/!s/([( ])(systemd|udev)([ )])/\\1\\2 plymouth\\3/}' "
+        "/etc/mkinitcpio.conf; fi",
+        "if [ -f /etc/kernel/cmdline ] && [ -f /usr/lib/initcpio/install/plymouth ]; then "
+        "for p in quiet splash loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0; do "
+        "grep -qw \"$p\" /etc/kernel/cmdline || sed -i \"s|\\$| $p|\" /etc/kernel/cmdline; "
+        "done; fi",
+        # Straight to the splash: the boot menu stays hidden unless a key is
+        # held while starting (Space), instead of 15 seconds of text.
+        "for f in /boot/loader/loader.conf /efi/loader/loader.conf; do "
+        "[ -f \"$f\" ] && sed -i 's/^timeout.*/timeout 0/' \"$f\"; done; true",
+    ]
+
     # Rebuild the boot images last. archinstall built them before any of the
     # above ran, so they still carry Arch's os-release: the boot menu title
     # and the "Welcome to ..." line both come from it. A failure here is
