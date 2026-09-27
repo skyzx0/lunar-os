@@ -21,7 +21,14 @@ kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled true
 kwriteconfig6 --file kwinrc --group Plugins --key contrastEnabled true
 dbus-send --session --dest=org.kde.KWin --type=method_call /KWin org.kde.KWin.reconfigure 2>/dev/null
 
-# Translucent panel.
+# Layout: top bar with the clock, the moon launcher and the tray; a floating
+# dock of apps at the bottom.
+dbus-send --session --dest=org.kde.plasmashell --type=method_call /PlasmaShell \
+    org.kde.PlasmaShell.evaluateScript \
+    string:"$(cat /usr/share/lunaros/plasma-layout.js)" 2>/dev/null
+sleep 1
+
+# Translucent panels.
 dbus-send --session --dest=org.kde.plasmashell --type=method_call /PlasmaShell \
     org.kde.PlasmaShell.evaluateScript \
     string:'panels().forEach(function (p) { p.opacity = "translucent"; })' 2>/dev/null

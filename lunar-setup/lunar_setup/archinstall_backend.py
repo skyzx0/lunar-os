@@ -117,7 +117,7 @@ def available_packages(pkgs: list, emit=None) -> list:
 def extra_packages(cfg: Config) -> list:
     """Packages beyond what archinstall's profile brings in."""
     pkgs = ["zsh", "vim", "networkmanager", "nftables", "plymouth",
-            "zram-generator", "sudo"]
+            "zram-generator", "sudo", "fastfetch"]
     p = cfg.profile_obj()
     if p.apparmor:
         pkgs.append("apparmor")
@@ -351,6 +351,15 @@ def lunar_layer(cfg: Config) -> list:
         f"        Option \"XkbLayout\" \"{cfg.keymap}\"\n"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
 
+    # fastfetch with the half moon, system-wide (a user's own
+    # ~/.config/fastfetch/config.jsonc still takes precedence); neofetch,
+    # which Arch no longer carries, runs it too.
+    cmds += [
+        write_asset_cmd("fetch/logo.txt", "/usr/share/lunaros/fetch-logo.txt"),
+        write_asset_cmd("fetch/config.jsonc", "/etc/xdg/fastfetch/config.jsonc"),
+        write_asset_cmd("fetch/neofetch", "/usr/local/bin/neofetch", "755"),
+    ]
+
     # Power profiles and Bluetooth on any graphical desktop. Tolerant of a
     # missing unit: a package skipped above should cost that feature only.
     if desktop_packages(cfg.desktop):
@@ -371,6 +380,8 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("plasma/wallpaper-metadata.json",
                             "/usr/share/wallpapers/Lunar/metadata.json"),
             write_asset_cmd("plasma/lunar-plasma-setup", "/usr/local/bin/lunar-plasma-setup", "755"),
+            write_asset_cmd("plasma/plasma-layout.js", "/usr/share/lunaros/plasma-layout.js"),
+            write_asset_cmd("plasma/lunar-logo.svg", "/usr/share/lunaros/lunar-logo.svg"),
             write_asset_cmd("plasma/lunar-plasma-setup.desktop",
                             "/etc/xdg/autostart/lunar-plasma-setup.desktop"),
             write_asset_cmd("plasma/sddm-lunar.conf", "/etc/sddm.conf.d/10-lunar.conf"),

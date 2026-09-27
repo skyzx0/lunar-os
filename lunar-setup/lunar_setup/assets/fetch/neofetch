@@ -1,0 +1,3 @@
+#!/bin/sh
+# neofetch is no longer maintained; fastfetch shows the same thing, faster.
+exec fastfetch "$@"
