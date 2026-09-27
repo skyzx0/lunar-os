@@ -405,6 +405,16 @@ def lunar_layer(cfg: Config) -> list:
         "[ -f \"$f\" ] && sed -i 's/^timeout.*/timeout 0/' \"$f\"; done; true",
     ]
 
+    # The image shown for a moment before Plymouth starts. Arch's kernel
+    # presets carry a commented-out --splash pointing at Arch's logo, and
+    # archinstall un-comments that line when it sets up UKIs; every boot then
+    # flashed the Arch logo. Same option, Lunar's image.
+    cmds += [
+        write_asset_cmd("splash.bmp", "/usr/share/lunaros/splash.bmp"),
+        "sed -i 's|/usr/share/systemd/bootctl/splash-arch.bmp|/usr/share/lunaros/splash.bmp|g' "
+        "/etc/mkinitcpio.d/*.preset 2>/dev/null; true",
+    ]
+
     # Rebuild the boot images last. archinstall built them before any of the
     # above ran, so they still carry Arch's os-release: the boot menu title
     # and the "Welcome to ..." line both come from it. A failure here is
