@@ -1,0 +1,21 @@
+# Lunar OS defaults for GNOME. Each is only a default: changing it in
+# Settings stores your own value, which takes precedence.
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Adwaita-dark'
+accent-color='purple'
+
+[org/gnome/desktop/background]
+picture-uri='file:///usr/share/wallpapers/Lunar/contents/images/3840x2160.png'
+picture-uri-dark='file:///usr/share/wallpapers/Lunar/contents/images/3840x2160.png'
+picture-options='zoom'
+primary-color='#000000'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file:///usr/share/wallpapers/Lunar/contents/images/3840x2160.png'
+picture-options='zoom'
+primary-color='#000000'
+
+[org/gnome/shell]
+favorite-apps=['org.gnome.Nautilus.desktop', 'firefox.desktop', 'org.gnome.Console.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Settings.desktop']

@@ -19,11 +19,13 @@ chroot.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import uuid
 
+from .locales import x11_for
 from .profiles import Config
 
 MEDIUM_REPO = "/var/lib/lunar/repo"
@@ -80,8 +82,8 @@ DESKTOP_EXTRAS = {
     # The gnome group is already complete; power profiles come from above.
     "gnome": [],
     "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
-                 "blueman", "pavucontrol", "brightnessctl"],
-    "sway": ["network-manager-applet", "blueman", "thunar"],
+                 "blueman", "pavucontrol", "brightnessctl", "swaybg"],
+    "sway": ["network-manager-applet", "blueman", "thunar", "wofi", "swayidle", "swaylock"],
     "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
            "brightnessctl", "thunar", "picom", "feh"],
     "minimal": [],
@@ -125,8 +127,8 @@ def extra_packages(cfg: Config) -> list:
         pkgs.append("usbguard")
     if p.auditd:
         pkgs.append("audit")
-    return (pkgs + desktop_packages(cfg.desktop) + lunar_packages(cfg)
-            + list(cfg.extra_packages))
+    return list(dict.fromkeys(pkgs + desktop_packages(cfg.desktop) + lunar_packages(cfg)
+                              + list(cfg.extra_packages)))
 
 
 # --------------------------------------------------------------------------
@@ -248,6 +250,21 @@ def disk_config(cfg: Config, size_bytes: int = None) -> dict:
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 
+_ARCHINSTALL_WORD = re.compile(r"(?<![/\w.-])Archinstall(?![/\w.-])")
+
+
+def rebrand(line: str) -> str:
+    """Lunar's names in archinstall's progress lines.
+
+    Only product names change. Paths (/var/log/archinstall/...) and package
+    names (archlinux-keyring) stay exact, so anything the user might need to
+    look up or type still matches the real thing. The failure log shown on
+    error is left unfiltered on purpose.
+    """
+    line = line.replace("Arch Linux", "Lunar OS")
+    return _ARCHINSTALL_WORD.sub("lunaros-setup", line)
+
+
 def write_asset_cmd(name: str, dest: str, mode: str = "644") -> str:
     """A command that writes one of the bundled files into the target.
 
@@ -255,11 +272,73 @@ def write_asset_cmd(name: str, dest: str, mode: str = "644") -> str:
     install medium, so the file travels inside the command itself. base64
     keeps any quotes or $ in the file from being read by the shell.
     """
-    import base64
     with open(os.path.join(ASSETS, name), "rb") as fh:
-        blob = base64.b64encode(fh.read()).decode()
+        return write_bytes_cmd(fh.read(), dest, mode)
+
+
+def write_bytes_cmd(data: bytes, dest: str, mode: str = "644") -> str:
+    import base64
+    blob = base64.b64encode(data).decode()
     return (f"mkdir -p {os.path.dirname(dest)} && "
             f"printf '%s' '{blob}' | base64 -d > {dest} && chmod {mode} {dest}")
+
+
+def render_asset(name: str, cfg: Config) -> bytes:
+    """A bundled config with the chosen keyboard layout filled in.
+
+    Most layouts have no variant; an empty variant is an error in Sway (and
+    pointless elsewhere), so the whole variant line is dropped then.
+    """
+    with open(os.path.join(ASSETS, name)) as fh:
+        text = fh.read()
+    layout, variant = x11_for(cfg.keymap)
+    text = text.replace("@XKB_LAYOUT@", layout)
+    if variant:
+        text = text.replace("@XKB_VARIANT@", variant)
+    else:
+        text = "".join(l for l in text.splitlines(True) if "@XKB_VARIANT@" not in l)
+    return text.encode()
+
+
+def user_files_cmds(cfg: Config, files: list) -> list:
+    """Per-user config files: into /etc/skel for future users, and straight
+    into the new user's home, because archinstall creates that user before
+    these commands run, so skel alone would never reach them."""
+    cmds = [write_bytes_cmd(render_asset(asset, cfg), f"/etc/skel/{rel}")
+            for asset, rel in files]
+    if cfg.username:
+        home = f"/home/{cfg.username}"
+        for _, rel in files:
+            cmds.append(f"install -Dm644 /etc/skel/{rel} {home}/{rel}")
+        cmds.append(f"chown -R {cfg.username}: {home}/.config")
+    return cmds
+
+
+# Each tiling desktop's own configs: (bundled file, path in the home folder).
+_GTK_DARK = [("desktops/common/gtk-settings.ini", ".config/gtk-3.0/settings.ini"),
+             ("desktops/common/gtk-settings.ini", ".config/gtk-4.0/settings.ini")]
+DESKTOP_USER_FILES = {
+    "hyprland": [
+        ("desktops/hyprland/hyprland.conf", ".config/hypr/hyprland.conf"),
+        ("desktops/hyprland/hyprlock.conf", ".config/hypr/hyprlock.conf"),
+        ("desktops/hyprland/hypridle.conf", ".config/hypr/hypridle.conf"),
+        ("desktops/hyprland/kitty.conf", ".config/kitty/kitty.conf"),
+        ("desktops/waybar/config-hyprland.json", ".config/waybar/config"),
+        ("desktops/waybar/style.css", ".config/waybar/style.css"),
+    ] + _GTK_DARK,
+    "sway": [
+        ("desktops/sway/config", ".config/sway/config"),
+        ("desktops/sway/foot.ini", ".config/foot/foot.ini"),
+        ("desktops/waybar/config-sway.json", ".config/waybar/config"),
+        ("desktops/waybar/style.css", ".config/waybar/style.css"),
+    ] + _GTK_DARK,
+    "i3": [
+        ("desktops/i3/config", ".config/i3/config"),
+        ("desktops/i3/i3status.conf", ".config/i3status/config"),
+        ("desktops/i3/picom.conf", ".config/picom/picom.conf"),
+        ("desktops/i3/alacritty.toml", ".config/alacritty/alacritty.toml"),
+    ] + _GTK_DARK,
+}
 
 
 def kernel_hardening(cfg: Config) -> list:
@@ -343,12 +422,18 @@ def lunar_layer(cfg: Config) -> list:
     # before failing. The console side is unaffected either way; archinstall
     # writes /etc/vconsole.conf directly, unconditionally, before that step
     # ever runs.
+    # X11 names its layouts differently from the console (uk -> gb), and has
+    # separate variants (de nodeadkeys); the keymap table maps between them.
+    xkb_layout, xkb_variant = x11_for(cfg.keymap)
+    variant_line = (f"        Option \"XkbVariant\" \"{xkb_variant}\"\n"
+                    if xkb_variant else "")
     cmds.append(
         "mkdir -p /etc/X11/xorg.conf.d && "
         f"printf 'Section \"InputClass\"\n"
         f"        Identifier \"keyboard\"\n"
         f"        MatchIsKeyboard \"on\"\n"
-        f"        Option \"XkbLayout\" \"{cfg.keymap}\"\n"
+        f"        Option \"XkbLayout\" \"{xkb_layout}\"\n"
+        f"{variant_line}"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
 
     # fastfetch with the half moon, system-wide (a user's own
@@ -365,6 +450,40 @@ def lunar_layer(cfg: Config) -> list:
     if desktop_packages(cfg.desktop):
         cmds.append("systemctl enable power-profiles-daemon.service bluetooth.service || true")
 
+    # Every install: pacman goes through ltxs in a terminal, and the Lunar
+    # icon that os-release names (LOGO=lunar) exists, so "About this
+    # system" screens show the moon.
+    cmds += [
+        write_asset_cmd("shell/lunar-shell.sh", "/etc/lunaros/shell.sh"),
+        "grep -q /etc/lunaros/shell.sh /etc/bash.bashrc 2>/dev/null || "
+        "echo '[ -r /etc/lunaros/shell.sh ] && . /etc/lunaros/shell.sh' >> /etc/bash.bashrc",
+        "mkdir -p /etc/zsh && (grep -q /etc/lunaros/shell.sh /etc/zsh/zshrc 2>/dev/null || "
+        "echo '[ -r /etc/lunaros/shell.sh ] && . /etc/lunaros/shell.sh' >> /etc/zsh/zshrc)",
+        write_asset_cmd("plasma/lunar-logo.svg", "/usr/share/icons/hicolor/scalable/apps/lunar.svg"),
+        write_asset_cmd("plasma/lunar-logo.svg", "/usr/share/pixmaps/lunar.svg"),
+    ]
+
+    # The moon wallpaper, for every graphical desktop.
+    if desktop_packages(cfg.desktop):
+        cmds.append(write_asset_cmd("plasma/lunar-wallpaper.png",
+                                    "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"))
+
+    # GNOME: dark, the moon, a Lunar dock - as system defaults, so anything
+    # changed in Settings overrides them.
+    if cfg.desktop == "gnome":
+        cmds += [
+            write_asset_cmd("desktops/gnome/dconf-profile-user", "/etc/dconf/profile/user"),
+            write_asset_cmd("desktops/gnome/00-lunar", "/etc/dconf/db/local.d/00-lunar"),
+            "dconf update || true",
+        ]
+
+    # Hyprland, Sway, i3: their whole look lives in the user's config files.
+    if cfg.desktop in DESKTOP_USER_FILES:
+        cmds += user_files_cmds(cfg, DESKTOP_USER_FILES[cfg.desktop])
+    if cfg.desktop in ("sway", "i3"):
+        cmds.append(write_asset_cmd("desktops/common/lightdm-gtk-greeter.conf",
+                                    "/etc/lightdm/lightdm-gtk-greeter.conf"))
+
     # Plasma: black, see-through, the moon as wallpaper and at login. These
     # are defaults; lunar-plasma-setup applies them once at first login and
     # everything stays changeable in System Settings.
@@ -373,8 +492,6 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("plasma/Lunar.colors", "/usr/share/color-schemes/Lunar.colors"),
             write_asset_cmd("plasma/Lunar.colorscheme", "/usr/share/konsole/Lunar.colorscheme"),
             write_asset_cmd("plasma/Lunar.profile", "/usr/share/konsole/Lunar.profile"),
-            write_asset_cmd("plasma/lunar-wallpaper.png",
-                            "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"),
             write_asset_cmd("plasma/lunar-wallpaper-preview.png",
                             "/usr/share/wallpapers/Lunar/contents/screenshot.png"),
             write_asset_cmd("plasma/wallpaper-metadata.json",
@@ -675,7 +792,7 @@ def install(cfg: Config, emit) -> None:
         for line in proc.stdout:
             line = line.rstrip()
             if line and line != last:
-                emit("   " + line[:110])
+                emit("   " + rebrand(line)[:110])
                 last = line
     finally:
         proc.stdout.close()

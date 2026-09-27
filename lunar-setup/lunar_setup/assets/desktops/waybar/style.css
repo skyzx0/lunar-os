@@ -1,0 +1,31 @@
+/* Lunar OS bar: black glass, the moon's grey, lavender for what is active. */
+* {
+    font-family: "Noto Sans", sans-serif;
+    font-size: 13px;
+    border: none;
+    border-radius: 0;
+    min-height: 0;
+}
+window#waybar {
+    background: rgba(0, 0, 0, 0.55);
+    color: #e2e5f0;
+}
+#custom-moon {
+    font-size: 17px;
+    padding: 0 12px;
+    color: #e2e5f0;
+}
+#workspaces button {
+    padding: 0 8px;
+    color: #6b6f7d;
+    background: transparent;
+}
+#workspaces button.active,
+#workspaces button.focused {
+    color: #969fff;
+}
+#clock, #pulseaudio, #network, #bluetooth, #battery, #tray {
+    padding: 0 10px;
+}
+#battery.warning { color: #e5c07b; }
+#battery.critical { color: #e06c75; }

@@ -46,6 +46,7 @@ KEYMAPS = [
     ("ie",          "English (Ireland)",            "ie",    ""),
     ("cf",          "French (Canada)",              "ca",    ""),
     ("de",          "German",                       "de",    ""),
+    ("de-latin1",   "German (Latin1)",              "de",    ""),
     ("de-latin1-nodeadkeys", "German (no dead keys)", "de",  "nodeadkeys"),
     ("at",          "German (Austria)",             "at",    ""),
     ("ch",          "German (Switzerland)",         "ch",    ""),

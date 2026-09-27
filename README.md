@@ -36,7 +36,18 @@ Every desktop gets a browser, fonts, battery and power-saver support
     sway       network and Bluetooth applets, Thunar
     i3         Alacritty, network and Bluetooth applets, Thunar, picom
 
+Every desktop gets the Lunar look: black, see-through terminals, the half
+moon as wallpaper. Hyprland, Sway and i3 get complete configs (bar, keys,
+lock screen, idle) in ~/.config - yours to edit. GNOME gets dark defaults
+and a dock; anything changed in Settings wins.
+
 Plasma also gets the Lunar look at first login: black colours, a
 see-through terminal, translucent panel, the half moon as wallpaper and
 behind the login screen. It is applied once; change anything afterwards in
 System Settings and it stays changed.
+
+## pacman
+
+Typed in a terminal, `pacman` runs `ltxs`. pacman itself stays installed as
+the engine underneath (ltxs, updates and the installer use it), and scripts
+or `sudo pacman` reach it unchanged.

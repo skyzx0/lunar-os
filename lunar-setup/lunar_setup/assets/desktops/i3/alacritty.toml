@@ -1,0 +1,12 @@
+# Lunar OS terminal: black glass.
+[window]
+opacity = 0.82
+padding = { x = 8, y = 8 }
+
+[colors.primary]
+background = "#000000"
+foreground = "#e2e5f0"
+
+[colors.cursor]
+cursor = "#969fff"
+text = "#000000"
