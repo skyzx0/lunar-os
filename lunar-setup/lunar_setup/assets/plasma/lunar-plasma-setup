@@ -1,0 +1,29 @@
+#!/bin/sh
+# Applies the Lunar look once, at a user's first Plasma login.
+#
+# Everything here is an ordinary setting afterwards - change any of it in
+# System Settings and it stays changed, because this never runs again. It
+# runs inside the session rather than at install time because Plasma's own
+# tools only apply a look to a running desktop.
+marker="${XDG_CONFIG_HOME:-$HOME/.config}/lunar-plasma-setup.done"
+[ -e "$marker" ] && exit 0
+
+sleep 4   # let the desktop finish starting
+
+# Dark base (panels, icons, cursor), then Lunar's black colours on top.
+plasma-apply-lookandfeel -a org.kde.breezedark.desktop
+plasma-apply-colorscheme Lunar
+plasma-apply-wallpaperimage /usr/share/wallpapers/Lunar/contents/images/3840x2160.png
+
+# See-through terminal with blur behind it.
+kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Lunar.profile
+kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled true
+kwriteconfig6 --file kwinrc --group Plugins --key contrastEnabled true
+dbus-send --session --dest=org.kde.KWin --type=method_call /KWin org.kde.KWin.reconfigure 2>/dev/null
+
+# Translucent panel.
+dbus-send --session --dest=org.kde.plasmashell --type=method_call /PlasmaShell \
+    org.kde.PlasmaShell.evaluateScript \
+    string:'panels().forEach(function (p) { p.opacity = "translucent"; })' 2>/dev/null
+
+mkdir -p "$(dirname "$marker")" && touch "$marker"

@@ -56,6 +56,64 @@ def lunar_packages(cfg: Config) -> list:
     return pkgs
 
 
+# archinstall's desktop profiles install the bare minimum: Plasma gets only
+# plasma-desktop (no network applet, no battery or power management, no
+# volume control, no Bluetooth), i3 gets xterm, and none of the tiling
+# desktops get a way to pick a Wi-Fi network. These fill that in.
+
+# Every graphical desktop.
+DESKTOP_COMMON = [
+    "firefox",
+    "noto-fonts", "noto-fonts-emoji", "ttf-dejavu",
+    "xdg-user-dirs",
+    "power-profiles-daemon", "upower",   # battery, power-saver mode
+    "bluez", "bluez-utils",
+]
+
+# Per desktop, on top of the above and archinstall's own selection.
+DESKTOP_EXTRAS = {
+    # plasma-meta is the full Plasma: network applet (plasma-nm), battery
+    # and power (powerdevil), volume (plasma-pa), Bluetooth (bluedevil),
+    # display settings (kscreen), themes for GTK apps. Then the usual apps.
+    "plasma": ["plasma-meta", "konsole", "dolphin", "kate", "ark",
+               "spectacle", "gwenview", "okular", "kcalc", "filelight"],
+    # The gnome group is already complete; power profiles come from above.
+    "gnome": [],
+    "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
+                 "blueman", "pavucontrol", "brightnessctl"],
+    "sway": ["network-manager-applet", "blueman", "thunar"],
+    "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
+           "brightnessctl", "thunar", "picom", "feh"],
+    "minimal": [],
+}
+
+
+def desktop_packages(desktop: str) -> list:
+    if desktop not in DESKTOP_EXTRAS or desktop == "minimal":
+        return []
+    return DESKTOP_COMMON + DESKTOP_EXTRAS[desktop]
+
+
+def available_packages(pkgs: list, emit=None) -> list:
+    """Drop package names the repositories do not have.
+
+    One unknown name makes pacman refuse the whole transaction, which would
+    fail the install at the package step. Better to install everything else
+    and say what was skipped. Runs on the live medium, which has pacman; if
+    the check itself cannot run, the list is used unchanged.
+    """
+    if subprocess.run(["pacman", "-Sy", "--noconfirm"],
+                      capture_output=True).returncode != 0:
+        return pkgs
+    keep, skipped = [], []
+    for name in pkgs:
+        ok = subprocess.run(["pacman", "-Si", name], capture_output=True).returncode == 0
+        (keep if ok else skipped).append(name)
+    if skipped and emit:
+        emit(f"  skipping packages the repositories do not have: {' '.join(skipped)}")
+    return keep
+
+
 def extra_packages(cfg: Config) -> list:
     """Packages beyond what archinstall's profile brings in."""
     pkgs = ["zsh", "vim", "networkmanager", "nftables", "plymouth",
@@ -67,7 +125,8 @@ def extra_packages(cfg: Config) -> list:
         pkgs.append("usbguard")
     if p.auditd:
         pkgs.append("audit")
-    return pkgs + lunar_packages(cfg) + list(cfg.extra_packages)
+    return (pkgs + desktop_packages(cfg.desktop) + lunar_packages(cfg)
+            + list(cfg.extra_packages))
 
 
 # --------------------------------------------------------------------------
@@ -292,6 +351,33 @@ def lunar_layer(cfg: Config) -> list:
         f"        Option \"XkbLayout\" \"{cfg.keymap}\"\n"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
 
+    # Power profiles and Bluetooth on any graphical desktop. Tolerant of a
+    # missing unit: a package skipped above should cost that feature only.
+    if desktop_packages(cfg.desktop):
+        cmds.append("systemctl enable power-profiles-daemon.service bluetooth.service || true")
+
+    # Plasma: black, see-through, the moon as wallpaper and at login. These
+    # are defaults; lunar-plasma-setup applies them once at first login and
+    # everything stays changeable in System Settings.
+    if cfg.desktop == "plasma":
+        cmds += [
+            write_asset_cmd("plasma/Lunar.colors", "/usr/share/color-schemes/Lunar.colors"),
+            write_asset_cmd("plasma/Lunar.colorscheme", "/usr/share/konsole/Lunar.colorscheme"),
+            write_asset_cmd("plasma/Lunar.profile", "/usr/share/konsole/Lunar.profile"),
+            write_asset_cmd("plasma/lunar-wallpaper.png",
+                            "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"),
+            write_asset_cmd("plasma/lunar-wallpaper-preview.png",
+                            "/usr/share/wallpapers/Lunar/contents/screenshot.png"),
+            write_asset_cmd("plasma/wallpaper-metadata.json",
+                            "/usr/share/wallpapers/Lunar/metadata.json"),
+            write_asset_cmd("plasma/lunar-plasma-setup", "/usr/local/bin/lunar-plasma-setup", "755"),
+            write_asset_cmd("plasma/lunar-plasma-setup.desktop",
+                            "/etc/xdg/autostart/lunar-plasma-setup.desktop"),
+            write_asset_cmd("plasma/sddm-lunar.conf", "/etc/sddm.conf.d/10-lunar.conf"),
+            write_asset_cmd("plasma/sddm-breeze-theme.conf.user",
+                            "/usr/share/sddm/themes/breeze/theme.conf.user"),
+        ]
+
     # Rebuild the boot images last. archinstall built them before any of the
     # above ran, so they still carry Arch's os-release: the boot menu title
     # and the "Welcome to ..." line both come from it. A failure here is
@@ -470,12 +556,17 @@ def install(cfg: Config, emit) -> None:
     require_network(log=emit)
     emit("  mirrors reachable")
 
+    emit("Checking the package list", accent=True)
+    config_packages = available_packages(extra_packages(cfg), emit)
+
     workdir = tempfile.mkdtemp(prefix="lunar-archinstall-")
     config_path = os.path.join(workdir, "user_configuration.json")
     creds_path = os.path.join(workdir, "user_credentials.json")
 
     with open(config_path, "w") as fh:
-        json.dump(build_config(cfg), fh, indent=2)
+        conf = build_config(cfg)
+        conf["packages"] = config_packages      # the checked list, not the raw one
+        json.dump(conf, fh, indent=2)
     # Credentials are readable by root only, and removed afterwards.
     fd = os.open(creds_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:

@@ -1,0 +1,8 @@
+{
+    "KPlugin": {
+        "Authors": [{ "Name": "Lunar OS" }],
+        "Id": "Lunar",
+        "License": "CC-BY-SA-4.0",
+        "Name": "Lunar"
+    }
+}

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar look
+Exec=/usr/local/bin/lunar-plasma-setup
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2
+NoDisplay=true
