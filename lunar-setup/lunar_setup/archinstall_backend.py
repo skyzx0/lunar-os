@@ -82,7 +82,7 @@ DESKTOP_EXTRAS = {
     # The gnome group is already complete; power profiles come from above.
     "gnome": [],
     "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
-                 "blueman", "pavucontrol", "brightnessctl", "swaybg"],
+                 "blueman", "pavucontrol", "brightnessctl", "swaybg", "btop", "cava"],
     "sway": ["network-manager-applet", "blueman", "thunar", "wofi", "swayidle", "swaylock"],
     "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
            "brightnessctl", "thunar", "picom", "feh"],
@@ -323,6 +323,9 @@ DESKTOP_USER_FILES = {
         ("desktops/hyprland/hyprlock.conf", ".config/hypr/hyprlock.conf"),
         ("desktops/hyprland/hypridle.conf", ".config/hypr/hypridle.conf"),
         ("desktops/hyprland/kitty.conf", ".config/kitty/kitty.conf"),
+        ("desktops/hyprland/btop/btop.conf", ".config/btop/btop.conf"),
+        ("desktops/hyprland/btop/lunar.theme", ".config/btop/themes/lunar.theme"),
+        ("desktops/hyprland/cava.conf", ".config/cava/config"),
         ("desktops/waybar/config-hyprland.json", ".config/waybar/config"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
     ] + _GTK_DARK,
@@ -434,6 +437,7 @@ def lunar_layer(cfg: Config) -> list:
         f"        MatchIsKeyboard \"on\"\n"
         f"        Option \"XkbLayout\" \"{xkb_layout}\"\n"
         f"{variant_line}"
+        f"        Option \"AutoRepeat\" \"250 50\"\n"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
 
     # fastfetch with the half moon, system-wide (a user's own
@@ -512,10 +516,8 @@ def lunar_layer(cfg: Config) -> list:
     # command line; the rebuild below then includes all three.
     theme = "/usr/share/plymouth/themes/lunar"
     cmds += [
-        write_asset_cmd("plymouth/lunar.plymouth", f"{theme}/lunar.plymouth"),
-        write_asset_cmd("plymouth/lunar.script", f"{theme}/lunar.script"),
-        write_asset_cmd("plymouth/moon.png", f"{theme}/moon.png"),
-        write_asset_cmd("plymouth/dot-0.png", f"{theme}/dot-0.png"),
+        *[write_asset_cmd(f"plymouth/{f}", f"{theme}/{f}")
+          for f in sorted(os.listdir(os.path.join(ASSETS, "plymouth")))],
         "plymouth-set-default-theme lunar || true",
         # After systemd or udev, whichever archinstall chose, so it starts
         # before the encryption prompt. Only if the hook is actually there:
@@ -533,15 +535,14 @@ def lunar_layer(cfg: Config) -> list:
         "[ -f \"$f\" ] && sed -i 's/^timeout.*/timeout 0/' \"$f\"; done; true",
     ]
 
-    # The image shown for a moment before Plymouth starts. Arch's kernel
-    # presets carry a commented-out --splash pointing at Arch's logo, and
-    # archinstall un-comments that line when it sets up UKIs; every boot then
-    # flashed the Arch logo. Same option, Lunar's image.
-    cmds += [
-        write_asset_cmd("splash.bmp", "/usr/share/lunaros/splash.bmp"),
-        "sed -i 's|/usr/share/systemd/bootctl/splash-arch.bmp|/usr/share/lunaros/splash.bmp|g' "
-        "/etc/mkinitcpio.d/*.preset 2>/dev/null; true",
-    ]
+    # Nothing between the firmware logo and the splash. Arch's kernel presets
+    # carry a --splash option pointing at Arch's logo, and archinstall turns
+    # it on when it sets up UKIs, so every boot flashed that logo. Removed:
+    # the screen stays black until the moon starts waxing.
+    cmds.append(
+        "sed -i -E 's#[[:space:]]*--splash[= ]/usr/share/systemd/bootctl/splash-arch\\.bmp##' "
+        "/etc/mkinitcpio.d/*.preset 2>/dev/null; true")
+
 
     # Rebuild the boot images last. archinstall built them before any of the
     # above ran, so they still carry Arch's os-release: the boot menu title

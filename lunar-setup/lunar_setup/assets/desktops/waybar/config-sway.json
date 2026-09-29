@@ -1,7 +1,7 @@
 {
     "layer": "top",
     "position": "top",
-    "height": 30,
+    "height": 34,
     "spacing": 6,
     "modules-left": [
         "custom/moon",
@@ -55,5 +55,8 @@
     },
     "tray": {
         "spacing": 8
-    }
+    },
+    "margin-top": 6,
+    "margin-left": 10,
+    "margin-right": 10
 }

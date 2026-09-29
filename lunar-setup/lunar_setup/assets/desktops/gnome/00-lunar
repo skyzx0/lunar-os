@@ -19,3 +19,7 @@ primary-color='#000000'
 
 [org/gnome/shell]
 favorite-apps=['org.gnome.Nautilus.desktop', 'firefox.desktop', 'org.gnome.Console.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Settings.desktop']
+
+[org/gnome/desktop/peripherals/keyboard]
+delay=uint32 250
+repeat-interval=uint32 20

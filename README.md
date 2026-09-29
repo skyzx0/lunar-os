@@ -48,6 +48,6 @@ System Settings and it stays changed.
 
 ## pacman
 
-Typed in a terminal, `pacman` runs `ltxs`. pacman itself stays installed as
-the engine underneath (ltxs, updates and the installer use it), and scripts
-or `sudo pacman` reach it unchanged.
+There is no pacman command on Lunar OS: typing it points to `ltxs`. The
+engine underneath stays installed, because ltxs and updates run on it, and
+scripts that call it are unaffected.

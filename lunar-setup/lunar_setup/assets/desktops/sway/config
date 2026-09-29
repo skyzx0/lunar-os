@@ -11,6 +11,8 @@ output * bg /usr/share/wallpapers/Lunar/contents/images/3840x2160.png fill
 input type:keyboard {
     xkb_layout @XKB_LAYOUT@
     xkb_variant @XKB_VARIANT@
+    repeat_delay 250
+    repeat_rate 50
 }
 input type:touchpad {
     natural_scroll enabled

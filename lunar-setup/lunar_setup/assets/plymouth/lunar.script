@@ -1,9 +1,9 @@
 # Lunar OS boot splash.
 #
-# Black, the half moon in the centre, a spinning ring of dots low on the
-# screen and "Lunar OS" beneath it - the layout laptop makers use for their
-# own boot screens. On an encrypted system the ring gives way to the
-# passphrase prompt; boot errors appear at the very bottom, never hidden.
+# Black. The moon waxes from a thin crescent into the half moon, a soft glow
+# breathes behind it, a ring of dots turns smoothly low on the screen and
+# "Lunar OS" fades in beneath. On an encrypted system the ring gives way to
+# the passphrase prompt; boot errors appear at the very bottom, never hidden.
 
 Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
 Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
@@ -15,58 +15,123 @@ scale = screen_height / 1080;
 if (scale < 0.5) scale = 0.5;
 if (scale > 2.0) scale = 2.0;
 
-# --- the moon, exactly centred ---------------------------------------------
+centre_x = screen_width / 2;
+centre_y = screen_height / 2;
 
-moon.image  = Image("moon.png");
-moon.scaled = moon.image.Scale(moon.image.GetWidth() * scale, moon.image.GetHeight() * scale);
-moon.sprite = Sprite(moon.scaled);
-moon.sprite.SetX(screen_width  / 2 - moon.scaled.GetWidth()  / 2);
-moon.sprite.SetY(screen_height / 2 - moon.scaled.GetHeight() / 2);
-moon.sprite.SetZ(10);
+# --- the moon: 24 frames of waxing, then the half moon ---------------------
 
-# --- spinning ring ---------------------------------------------------------
+frame_count = 24;
+moon_frames[0] = Image("moon-0.png");
+moon_frames[1] = Image("moon-1.png");
+moon_frames[2] = Image("moon-2.png");
+moon_frames[3] = Image("moon-3.png");
+moon_frames[4] = Image("moon-4.png");
+moon_frames[5] = Image("moon-5.png");
+moon_frames[6] = Image("moon-6.png");
+moon_frames[7] = Image("moon-7.png");
+moon_frames[8] = Image("moon-8.png");
+moon_frames[9] = Image("moon-9.png");
+moon_frames[10] = Image("moon-10.png");
+moon_frames[11] = Image("moon-11.png");
+moon_frames[12] = Image("moon-12.png");
+moon_frames[13] = Image("moon-13.png");
+moon_frames[14] = Image("moon-14.png");
+moon_frames[15] = Image("moon-15.png");
+moon_frames[16] = Image("moon-16.png");
+moon_frames[17] = Image("moon-17.png");
+moon_frames[18] = Image("moon-18.png");
+moon_frames[19] = Image("moon-19.png");
+moon_frames[20] = Image("moon-20.png");
+moon_frames[21] = Image("moon-21.png");
+moon_frames[22] = Image("moon-22.png");
+moon_frames[23] = Image("moon-23.png");
 
-ring_count = 8;
-ring_r     = 16 * scale;
-ring_x     = screen_width / 2;
+moon_size = 256 * scale;
+for (i = 0; i < frame_count; i++)
+    moon_frames[i] = moon_frames[i].Scale(moon_size, moon_size);
+
+moon_sprite = Sprite(moon_frames[0]);
+moon_sprite.SetX(centre_x - moon_size / 2);
+moon_sprite.SetY(centre_y - moon_size / 2);
+moon_sprite.SetZ(10);
+moon_sprite.SetOpacity(0);
+
+# --- glow behind it ---------------------------------------------------------
+
+glow_size   = 512 * scale;
+glow_image  = Image("glow.png").Scale(glow_size, glow_size);
+glow_sprite = Sprite(glow_image);
+glow_sprite.SetX(centre_x - glow_size / 2);
+glow_sprite.SetY(centre_y - glow_size / 2);
+glow_sprite.SetZ(5);
+glow_sprite.SetOpacity(0);
+
+# --- ring: a comet of dots turning smoothly ---------------------------------
+
+ring_count = 10;
+ring_r     = 17 * scale;
+ring_x     = centre_x;
 ring_y     = screen_height * 0.80;
-dot_size   = 7 * scale;
+dot_size   = 6 * scale;
+dot_image  = Image("dot-0.png").Scale(dot_size, dot_size);
 
 for (i = 0; i < ring_count; i++) {
-    angle = i / ring_count * 2 * Math.Pi - Math.Pi / 2;
-    ring[i].image  = Image("dot-0.png").Scale(dot_size, dot_size);
-    ring[i].sprite = Sprite(ring[i].image);
-    ring[i].sprite.SetX(ring_x + Math.Cos(angle) * ring_r - dot_size / 2);
-    ring[i].sprite.SetY(ring_y + Math.Sin(angle) * ring_r - dot_size / 2);
-    ring[i].sprite.SetZ(10);
-    ring[i].sprite.SetOpacity(0.15);
+    ring[i] = Sprite(dot_image);
+    ring[i].SetZ(10);
+    ring[i].SetOpacity(0);
 }
 ring_visible = 1;
 
-# --- name at the bottom ----------------------------------------------------
+# --- name at the bottom -----------------------------------------------------
 
-brand.image  = Image.Text("Lunar OS", 0.82, 0.84, 0.90, 1, "Sans 12");
-brand.sprite = Sprite(brand.image);
-brand.sprite.SetX(screen_width / 2 - brand.image.GetWidth() / 2);
-brand.sprite.SetY(screen_height * 0.88);
-brand.sprite.SetZ(10);
+brand_image  = Image.Text("Lunar OS", 0.82, 0.84, 0.90, 1, "Sans 12");
+brand_sprite = Sprite(brand_image);
+brand_sprite.SetX(centre_x - brand_image.GetWidth() / 2);
+brand_sprite.SetY(screen_height * 0.88);
+brand_sprite.SetZ(10);
+brand_sprite.SetOpacity(0);
 
-# --- animation -------------------------------------------------------------
+# --- animation, called about 50 times a second ------------------------------
 
 tick = 0;
 
+fun clamp01(v) {
+    if (v < 0) return 0;
+    if (v > 1) return 1;
+    return v;
+}
+
 fun refresh_callback() {
     tick++;
-    if (ring_visible == 0) return;
-    head = Math.Int(tick / 4) % ring_count;
-    for (i = 0; i < ring_count; i++) {
-        behind = (head - i + ring_count) % ring_count;
-        ring[i].sprite.SetOpacity(1.0 - behind / ring_count * 0.85);
+
+    # Moon: fade in while waxing, one frame every 2 ticks (about a second).
+    frame = Math.Int(tick / 2);
+    if (frame > frame_count - 1) frame = frame_count - 1;
+    moon_sprite.SetImage(moon_frames[frame]);
+    moon_sprite.SetOpacity(clamp01(tick / 20));
+
+    # Glow: rises once the moon is full, then breathes slowly.
+    rise = clamp01((tick - 40) / 40);
+    glow_sprite.SetOpacity(rise * (0.35 + 0.15 * Math.Sin(tick * 0.04)));
+
+    # Name: fades in after the moon.
+    brand_sprite.SetOpacity(clamp01((tick - 50) / 40));
+
+    # Ring: the whole ring turns a little each frame; dots fade behind the head.
+    if (ring_visible == 1) {
+        ring_in = clamp01((tick - 30) / 30);
+        spin = tick * 0.11;
+        for (i = 0; i < ring_count; i++) {
+            angle = spin - i * (2 * Math.Pi / ring_count);
+            ring[i].SetX(ring_x + Math.Cos(angle) * ring_r - dot_size / 2);
+            ring[i].SetY(ring_y + Math.Sin(angle) * ring_r - dot_size / 2);
+            ring[i].SetOpacity(ring_in * (1.0 - i / ring_count * 0.9));
+        }
     }
 }
 Plymouth.SetRefreshFunction(refresh_callback);
 
-# --- passphrase prompt -----------------------------------------------------
+# --- passphrase prompt ------------------------------------------------------
 # With an encrypted disk this is the screen most boots stop on: it replaces
 # the ring, in the same place, and must be obviously waiting for input.
 
@@ -75,11 +140,11 @@ bullets_sprite = Sprite();
 
 fun display_password_callback(prompt, bullets) {
     ring_visible = 0;
-    for (i = 0; i < ring_count; i++) ring[i].sprite.SetOpacity(0);
+    for (i = 0; i < ring_count; i++) ring[i].SetOpacity(0);
 
     prompt_image = Image.Text("Enter passphrase to unlock", 0.85, 0.87, 0.92, 1, "Sans 12");
     prompt_sprite.SetImage(prompt_image);
-    prompt_sprite.SetX(screen_width / 2 - prompt_image.GetWidth() / 2);
+    prompt_sprite.SetX(centre_x - prompt_image.GetWidth() / 2);
     prompt_sprite.SetY(ring_y - 30 * scale);
     prompt_sprite.SetZ(20);
 
@@ -87,7 +152,7 @@ fun display_password_callback(prompt, bullets) {
     for (i = 0; i < bullets; i++) dot_string += "*";
     bullets_image = Image.Text(dot_string, 0.85, 0.87, 0.92, 1, "Sans 14");
     bullets_sprite.SetImage(bullets_image);
-    bullets_sprite.SetX(screen_width / 2 - bullets_image.GetWidth() / 2);
+    bullets_sprite.SetX(centre_x - bullets_image.GetWidth() / 2);
     bullets_sprite.SetY(ring_y + 4 * scale);
     bullets_sprite.SetZ(20);
 }
@@ -100,7 +165,7 @@ fun display_normal_callback() {
 }
 Plymouth.SetDisplayNormalFunction(display_normal_callback);
 
-# --- messages --------------------------------------------------------------
+# --- messages ---------------------------------------------------------------
 # Errors must be visible. A splash that hides a failed fsck is worse than no
 # splash at all.
 
@@ -110,13 +175,14 @@ message_sprite.SetPosition(screen_width * 0.5, screen_height * 0.95, 30);
 fun message_callback(text) {
     image = Image.Text(text, 0.6, 0.62, 0.68, 1, "Sans 9");
     message_sprite.SetImage(image);
-    message_sprite.SetX(screen_width / 2 - image.GetWidth() / 2);
+    message_sprite.SetX(centre_x - image.GetWidth() / 2);
 }
 Plymouth.SetMessageFunction(message_callback);
 
 fun quit_callback() {
-    moon.sprite.SetOpacity(0);
-    brand.sprite.SetOpacity(0);
-    for (i = 0; i < ring_count; i++) ring[i].sprite.SetOpacity(0);
+    moon_sprite.SetOpacity(0);
+    glow_sprite.SetOpacity(0);
+    brand_sprite.SetOpacity(0);
+    for (i = 0; i < ring_count; i++) ring[i].SetOpacity(0);
 }
 Plymouth.SetQuitFunction(quit_callback);

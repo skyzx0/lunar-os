@@ -1,10 +1,11 @@
 # Lunar OS interactive shell settings (bash and zsh).
 
-# Packages are managed with ltxs. pacman stays installed as the engine
-# underneath - ltxs, updates and the installer all use it - but typing it
-# goes through ltxs. Scripts and "sudo pacman" are unaffected: this only
-# exists in interactive shells.
+# Lunar OS manages packages with ltxs; there is no pacman command. The engine
+# ltxs runs on stays installed underneath - updates and ltxs itself need it -
+# but it is not something to type. Scripts that call it are unaffected: this
+# only exists in interactive shells.
 pacman() {
-    printf '\033[2mLunar OS uses ltxs  ->  ltxs %s\033[0m\n' "$*" >&2
-    command ltxs "$@"
+    printf 'pacman: not a Lunar OS command. Use ltxs:\n' >&2
+    printf '  ltxs install <package>   ltxs remove <package>   ltxs update   ltxs help\n' >&2
+    return 127
 }
