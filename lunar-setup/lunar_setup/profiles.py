@@ -148,12 +148,19 @@ class Config:
     locale: str = "en_US.UTF-8"
     keymap: str = "us"
     desktop: str = "hyprland"
+    # More desktops installed alongside the main one; pick one at login.
+    extra_desktops: list = field(default_factory=list)
     profile: str = "hardened"
     encrypt: bool = True              # LUKS2 full-disk encryption
     fast: bool = False                # minimal console system, fastest install
     spoof_network: bool = False       # MAC/hostname/DNS randomisation at boot
     cover_traffic: bool = False       # decoy traffic; off, and honestly caveated
     extra_packages: list = field(default_factory=list)
+
+    def all_desktops(self) -> list:
+        """The main desktop first, then the others, without repeats."""
+        out = [self.desktop] + [d for d in self.extra_desktops if d != "minimal"]
+        return list(dict.fromkeys(out))
 
     def desktop_obj(self) -> Desktop:
         return next(d for d in DESKTOPS if d.key == self.desktop)

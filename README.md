@@ -25,6 +25,9 @@ the most recent step.
 
 ## Desktops
 
+Several desktops can be installed together; choose between them at the
+login screen. The first one picked decides which login screen that is.
+
 Every desktop gets a browser, fonts, battery and power-saver support
 (power-profiles-daemon), and Bluetooth. On top of that:
 

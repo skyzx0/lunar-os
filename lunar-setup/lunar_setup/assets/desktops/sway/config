@@ -20,6 +20,10 @@ input type:touchpad {
 }
 
 default_border pixel 2
+
+# Every window see-through: Wayland apps by app_id, older X11 apps by class.
+for_window [app_id=".*"] opacity 0.92
+for_window [class=".*"] opacity 0.92
 gaps inner 6
 gaps outer 8
 
@@ -28,9 +32,8 @@ client.focused          #969fff #000000 #e2e5f0 #969fff   #969fff
 client.unfocused        #1a1a1f #000000 #6b6f7d #1a1a1f   #1a1a1f
 client.focused_inactive #1a1a1f #000000 #9aa0b0 #1a1a1f   #1a1a1f
 
-bar {
-    swaybar_command waybar
-}
+# The bar: Waybar with Sway's own layout file.
+exec waybar -c ~/.config/waybar/sway.json -s ~/.config/waybar/style.css
 
 exec nm-applet --indicator
 exec blueman-applet

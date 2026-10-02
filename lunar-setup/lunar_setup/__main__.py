@@ -197,6 +197,24 @@ def wizard(stdscr) -> Config:
     if i is None:
         return None
     cfg.desktop = DESKTOPS[i].key
+    cfg.extra_desktops = []
+
+    # More desktops alongside the main one: each becomes a session to pick at
+    # the login screen. The main desktop decides which login screen it is.
+    while cfg.desktop != "minimal":
+        chosen = cfg.all_desktops()
+        others = [d for d in DESKTOPS if d.key not in chosen and d.key != "minimal"]
+        if not others:
+            break
+        names = ", ".join(next(d.name for d in DESKTOPS if d.key == k) for k in chosen)
+        j = s.menu("Add another desktop?",
+                   [("Done", f"Install {names}")] + [(d.name, d.blurb) for d in others],
+                   step=step(7),
+                   preamble="Install more than one and choose between them at the "
+                            "login screen. Each adds to the download.")
+        if j is None or j == 0:
+            break
+        cfg.extra_desktops.append(others[j - 1].key)
 
     # 8 - security profile
     i = s.menu("Security profile", [(p.name, p.blurb) for p in PROFILES],
@@ -240,7 +258,8 @@ def wizard(stdscr) -> Config:
     if not cfg.encrypt:
         lines += ["NOT ENCRYPTED - readable by anyone who has the disk.", ""]
     lines += [
-        f"Filesystem {cfg.filesystem}    Desktop {cfg.desktop_obj().name}"
+        f"Filesystem {cfg.filesystem}    Desktop "
+        f"{' + '.join(next(d.name for d in DESKTOPS if d.key == k) for k in cfg.all_desktops())}"
         f"    Profile {p.name}",
         f"Keyboard {cfg.keymap}    Language {cfg.locale}    Timezone {cfg.timezone}",
         f"Host {cfg.hostname}    User {cfg.username}",

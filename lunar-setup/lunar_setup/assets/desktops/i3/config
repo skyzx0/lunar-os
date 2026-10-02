@@ -25,14 +25,16 @@ bar {
     position top
     status_command i3status
     tray_output primary
+    # Translucent: colours carry an alpha channel (#RRGGBBAA).
+    i3bar_command i3bar --transparency
     colors {
-        background #000000
+        background #00000099
         statusline #e2e5f0
-        separator  #1a1a1f
-        focused_workspace  #000000 #000000 #969fff
-        active_workspace   #000000 #000000 #e2e5f0
-        inactive_workspace #000000 #000000 #6b6f7d
-        urgent_workspace   #000000 #000000 #e06c75
+        separator  #ffffff22
+        focused_workspace  #00000000 #00000000 #969fff
+        active_workspace   #00000000 #00000000 #e2e5f0
+        inactive_workspace #00000000 #00000000 #6b6f7d
+        urgent_workspace   #00000000 #00000000 #e06c75
     }
 }
 

@@ -53,7 +53,7 @@ def lunar_packages(cfg: Config) -> list:
     if not os.path.exists(os.path.join(MEDIUM_REPO, "lunar.db.tar.zst")):
         return []
     pkgs = ["lunar-cli", "lunar-hardening", "lunar-branding"]
-    if cfg.desktop == "plasma":
+    if "plasma" in cfg.all_desktops():
         pkgs.append("lunar-look")
     return pkgs
 
@@ -88,6 +88,24 @@ DESKTOP_EXTRAS = {
            "brightnessctl", "thunar", "picom", "feh"],
     "minimal": [],
 }
+
+
+def graphical(cfg: Config) -> bool:
+    return any(d != "minimal" for d in cfg.all_desktops())
+
+
+def greeter_for(cfg: Config):
+    """One login screen for all selected desktops. SDDM and GDM both list
+    every installed session; SDDM is preferred when Plasma or Hyprland is
+    among them, GDM when GNOME is, LightDM otherwise."""
+    chosen = cfg.all_desktops()
+    if not graphical(cfg):
+        return None
+    if "plasma" in chosen or "hyprland" in chosen:
+        return "sddm"
+    if "gnome" in chosen:
+        return "gdm"
+    return "lightdm-gtk-greeter"
 
 
 def desktop_packages(desktop: str) -> list:
@@ -127,7 +145,7 @@ def extra_packages(cfg: Config) -> list:
         pkgs.append("usbguard")
     if p.auditd:
         pkgs.append("audit")
-    return list(dict.fromkeys(pkgs + desktop_packages(cfg.desktop) + lunar_packages(cfg)
+    return list(dict.fromkeys(pkgs + [p for d in cfg.all_desktops() for p in desktop_packages(d)] + lunar_packages(cfg)
                               + list(cfg.extra_packages)))
 
 
@@ -326,13 +344,18 @@ DESKTOP_USER_FILES = {
         ("desktops/hyprland/btop/btop.conf", ".config/btop/btop.conf"),
         ("desktops/hyprland/btop/lunar.theme", ".config/btop/themes/lunar.theme"),
         ("desktops/hyprland/cava.conf", ".config/cava/config"),
-        ("desktops/waybar/config-hyprland.json", ".config/waybar/config"),
+        ("desktops/hyprland/dunstrc", ".config/dunst/dunstrc"),
+        ("desktops/hyprland/wofi/config", ".config/wofi/config"),
+        ("desktops/hyprland/wofi/style.css", ".config/wofi/style.css"),
+        ("desktops/waybar/config-hyprland.json", ".config/waybar/hyprland.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
     ] + _GTK_DARK,
     "sway": [
         ("desktops/sway/config", ".config/sway/config"),
         ("desktops/sway/foot.ini", ".config/foot/foot.ini"),
-        ("desktops/waybar/config-sway.json", ".config/waybar/config"),
+        ("desktops/hyprland/wofi/config", ".config/wofi/config"),
+        ("desktops/hyprland/wofi/style.css", ".config/wofi/style.css"),
+        ("desktops/waybar/config-sway.json", ".config/waybar/sway.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
     ] + _GTK_DARK,
     "i3": [
@@ -451,7 +474,7 @@ def lunar_layer(cfg: Config) -> list:
 
     # Power profiles and Bluetooth on any graphical desktop. Tolerant of a
     # missing unit: a package skipped above should cost that feature only.
-    if desktop_packages(cfg.desktop):
+    if graphical(cfg):
         cmds.append("systemctl enable power-profiles-daemon.service bluetooth.service || true")
 
     # Every install: pacman goes through ltxs in a terminal, and the Lunar
@@ -468,13 +491,13 @@ def lunar_layer(cfg: Config) -> list:
     ]
 
     # The moon wallpaper, for every graphical desktop.
-    if desktop_packages(cfg.desktop):
+    if graphical(cfg):
         cmds.append(write_asset_cmd("plasma/lunar-wallpaper.png",
                                     "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"))
 
     # GNOME: dark, the moon, a Lunar dock - as system defaults, so anything
     # changed in Settings overrides them.
-    if cfg.desktop == "gnome":
+    if "gnome" in cfg.all_desktops():
         cmds += [
             write_asset_cmd("desktops/gnome/dconf-profile-user", "/etc/dconf/profile/user"),
             write_asset_cmd("desktops/gnome/00-lunar", "/etc/dconf/db/local.d/00-lunar"),
@@ -482,16 +505,18 @@ def lunar_layer(cfg: Config) -> list:
         ]
 
     # Hyprland, Sway, i3: their whole look lives in the user's config files.
-    if cfg.desktop in DESKTOP_USER_FILES:
-        cmds += user_files_cmds(cfg, DESKTOP_USER_FILES[cfg.desktop])
-    if cfg.desktop in ("sway", "i3"):
+    files = list(dict.fromkeys(f for d in cfg.all_desktops()
+                               for f in DESKTOP_USER_FILES.get(d, [])))
+    if files:
+        cmds += user_files_cmds(cfg, files)
+    if greeter_for(cfg) == "lightdm-gtk-greeter":
         cmds.append(write_asset_cmd("desktops/common/lightdm-gtk-greeter.conf",
                                     "/etc/lightdm/lightdm-gtk-greeter.conf"))
 
     # Plasma: black, see-through, the moon as wallpaper and at login. These
     # are defaults; lunar-plasma-setup applies them once at first login and
     # everything stays changeable in System Settings.
-    if cfg.desktop == "plasma":
+    if "plasma" in cfg.all_desktops():
         cmds += [
             write_asset_cmd("plasma/Lunar.colors", "/usr/share/color-schemes/Lunar.colors"),
             write_asset_cmd("plasma/Lunar.colorscheme", "/usr/share/konsole/Lunar.colorscheme"),
@@ -573,7 +598,9 @@ def enabled_services(cfg: Config) -> list:
 
 
 def build_config(cfg: Config, size_bytes: int = None) -> dict:
-    profile = PROFILE_FOR.get(cfg.desktop, PROFILE_FOR["minimal"])
+    main = PROFILE_FOR.get(cfg.desktop, PROFILE_FOR["minimal"])
+    details = [d for k in cfg.all_desktops() for d in PROFILE_FOR.get(k, PROFILE_FOR["minimal"])["details"]]
+    profile = {"main": main["main"], "details": list(dict.fromkeys(details)), "greeter": greeter_for(cfg)}
     p = cfg.profile_obj()
 
     kernels = ["linux-hardened", "linux-lts"] if p.hardened_kernel else ["linux", "linux-lts"]
@@ -757,7 +784,7 @@ def install(cfg: Config, emit) -> None:
         fh.write(WRAPPER_SOURCE)
 
     emit("Installing with archinstall", accent=True)
-    emit(f"  target {cfg.disk}   desktop {cfg.desktop}   profile {cfg.profile}")
+    emit(f"  target {cfg.disk}   desktop {' + '.join(cfg.all_desktops())}   profile {cfg.profile}")
     emit(f"  configuration {config_path}")
     emit("")
 
