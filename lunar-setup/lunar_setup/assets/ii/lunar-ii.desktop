@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=illogical-impulse setup
+Comment=Install or reinstall the illogical-impulse Hyprland desktop
+Exec=kitty --title "Lunar OS - illogical-impulse" lunar-ii
+Icon=lunar
+Terminal=false
+Categories=Settings;DesktopSettings;
+OnlyShowIn=Hyprland;

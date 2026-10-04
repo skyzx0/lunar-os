@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# lunar-ii - illogical-impulse for Hyprland on Lunar OS.
+#
+# illogical-impulse (github.com/end-4/dots-hyprland, GPL-3.0) is a complete,
+# widely used Hyprland setup: bar, overview, sidebars, launcher, settings,
+# colours generated from the wallpaper. Lunar installs it as you, at a pinned
+# version known to match the Hyprland Lunar ships, then adds a few things:
+#
+#   - your keyboard layout (illogical-impulse assumes US) and quick key repeat
+#   - the half-moon wallpaper, which its colour scheme is generated from
+#   - the moon as the icon in the corner of its bar
+#
+#   lunar-ii                 install, or reinstall at the pinned version
+#   lunar-ii --first-login   offer it once, at the first Hyprland login
+#
+# Its own installer refuses to run as root, builds part of itself from
+# source and asks for your password for system packages, so it runs here,
+# in a terminal, rather than during the Lunar installation.
+
+set -uo pipefail
+
+PIN="33f31a08caddd41422a2d97670adeeb52b4f1e7c"
+REPO="https://github.com/end-4/dots-hyprland"
+SRC="$HOME/.local/share/lunaros/dots-hyprland"
+STATE="$HOME/.config/lunaros"
+DONE="$STATE/ii-installed"
+DECLINED="$STATE/ii-declined"
+MOON="/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"
+
+accent=$'\033[38;2;150;160;255m'; dim=$'\033[2m'; bold=$'\033[1m'; off=$'\033[0m'
+say()  { printf '%s::%s %s\n' "$accent" "$off" "$*"; }
+fail() { printf '\n%s!!%s %s\n' $'\033[31m' "$off" "$*" >&2; }
+
+if [[ "${1:-}" == "--first-login" ]]; then
+    # Offer once. The terminal shows what is about to happen and asks first.
+    [[ -e "$DONE" || -e "$DECLINED" ]] && exit 0
+    exec kitty --title "Lunar OS - illogical-impulse" "$0"
+fi
+
+if (( EUID == 0 )); then
+    fail "run lunar-ii as your own user, not as root (it asks for your password when it needs it)"
+    exit 1
+fi
+
+clear
+printf '\n  %sLunar OS%s  %s- Hyprland, finished%s\n\n' "$bold" "$off" "$dim" "$off"
+cat <<EOF
+  This installs ${bold}illogical-impulse${off}, a complete Hyprland desktop: bar,
+  overview, sidebars, launcher, notifications, and a settings panel for the
+  look - with colours generated from your wallpaper.
+
+  It takes ${bold}15-30 minutes${off} (part of it is built from source), needs the
+  internet, and asks for your password for system packages. Your current
+  Hyprland setup is kept in ~/.config/hypr.lunar-classic.
+
+EOF
+read -r -p "  Install it now? [Y/n] " answer
+if [[ "$answer" =~ ^[Nn] ]]; then
+    mkdir -p "$STATE" && touch "$DECLINED"
+    printf '\n  %sNot now. Run %slunar-ii%s any time to install it.%s\n\n' "$dim" "$off$accent" "$off$dim" "$off"
+    read -r -p "  Press Enter to close. " _
+    exit 0
+fi
+echo
+
+say "Checking the connection"
+if ! curl -fsI --max-time 15 https://github.com >/dev/null; then
+    fail "no internet connection - connect first (the Wi-Fi icon in the bar), then run lunar-ii"
+    read -r -p "  Press Enter to close. " _; exit 1
+fi
+
+say "Getting illogical-impulse (pinned version ${PIN:0:7})"
+mkdir -p "$(dirname "$SRC")"
+if [[ -d "$SRC/.git" ]]; then
+    git -C "$SRC" fetch --quiet origin || { fail "could not update the download"; exit 1; }
+else
+    rm -rf "$SRC"
+    git clone --quiet "$REPO" "$SRC" || { fail "could not download illogical-impulse"; exit 1; }
+fi
+git -C "$SRC" -c advice.detachedHead=false checkout --quiet --force "$PIN" \
+    || { fail "pinned version $PIN not found"; exit 1; }
+
+# Lunar's own Hyprland setup steps aside (Hyprland prefers the Lua config
+# illogical-impulse brings, but keeping both side by side is confusing).
+if [[ -f "$HOME/.config/hypr/hyprland.conf" && ! -e "$HOME/.config/hypr.lunar-classic" ]]; then
+    say "Keeping your current Hyprland setup in ~/.config/hypr.lunar-classic"
+    mv "$HOME/.config/hypr" "$HOME/.config/hypr.lunar-classic"
+fi
+
+# Lunar's tweaks go in custom/, which illogical-impulse loads after its own
+# defaults and never overwrites - so they survive its updates.
+say "Adding your keyboard layout"
+layout=us; variant=""
+kb=/etc/X11/xorg.conf.d/00-keyboard.conf
+if [[ -r "$kb" ]]; then
+    layout=$(sed -n 's/.*"XkbLayout" *"\([^"]*\)".*/\1/p' "$kb" | head -1)
+    variant=$(sed -n 's/.*"XkbVariant" *"\([^"]*\)".*/\1/p' "$kb" | head -1)
+    layout=${layout:-us}
+fi
+mkdir -p "$HOME/.config/hypr/custom"
+custom="$HOME/.config/hypr/custom/general.lua"
+if ! grep -q "Lunar OS" "$custom" 2>/dev/null; then
+    {
+        echo "-- Lunar OS: your keyboard layout and quick key repeat."
+        echo "-- illogical-impulse loads this after its defaults and never overwrites it."
+        echo "hl.config({"
+        echo "    input = {"
+        echo "        kb_layout = \"$layout\","
+        [[ -n "$variant" ]] && echo "        kb_variant = \"$variant\","
+        echo "        repeat_delay = 250,"
+        echo "        repeat_rate = 50,"
+        echo "    },"
+        echo "})"
+        if [[ -s "$custom" ]]; then echo; cat "$custom"; fi
+    } > "$custom.lunar"
+    mv "$custom.lunar" "$custom"
+fi
+
+say "Running the illogical-impulse installer (this is the long part)"
+echo
+cd "$SRC" || exit 1
+if ! ./setup install --force; then
+    fail "the illogical-impulse installer stopped. Its output is above; run lunar-ii again to retry."
+    read -r -p "  Press Enter to close. " _; exit 1
+fi
+
+say "Finishing with the Lunar touches"
+icons="$HOME/.config/quickshell/ii/assets/icons"
+if [[ -d "$icons" ]]; then
+    cat > "$icons/lunar-symbolic.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1.5 A6.5 6.5 0 0 1 8 14.5 Z" fill="#ffffff"/></svg>
+SVG
+    cfg="$HOME/.config/illogical-impulse/config.json"
+    mkdir -p "$(dirname "$cfg")"
+    python3 - "$cfg" <<'PY'
+import json, sys, os
+p = sys.argv[1]
+try:
+    c = json.load(open(p))
+except (OSError, ValueError):
+    c = {}
+c.setdefault("bar", {})["topLeftIcon"] = "lunar-symbolic"
+json.dump(c, open(p, "w"), indent=4)
+PY
+fi
+switchwall="$HOME/.config/quickshell/ii/scripts/colors/switchwall.sh"
+if [[ -x "$switchwall" && -f "$MOON" ]]; then
+    "$switchwall" --image "$MOON" --mode dark >/dev/null 2>&1 \
+        || say "${dim}The moon wallpaper will be set at your next login.${off}"
+fi
+
+mkdir -p "$STATE" && touch "$DONE"; rm -f "$DECLINED"
+echo
+printf '  %sDone.%s Log out and back in to Hyprland to start illogical-impulse.\n' "$bold" "$off"
+printf '  %sSuper+/ shows its keyboard shortcuts.%s\n\n' "$dim" "$off"
+read -r -p "  Press Enter to close. " _

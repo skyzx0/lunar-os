@@ -1,6 +1,8 @@
-# Lunar OS terminal: black glass.
+# Lunar OS terminal: black glass. Transparency and accent: Lunar Look.
+[general]
+import = ["~/.config/alacritty/lunar-look.toml"]
+
 [window]
-opacity = 0.82
 padding = { x = 8, y = 8 }
 
 [colors.primary]

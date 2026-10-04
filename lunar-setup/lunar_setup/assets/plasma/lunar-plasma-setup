@@ -24,21 +24,14 @@ kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor 0.6
 kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile Lunar.profile
 kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled true
 kwriteconfig6 --file kwinrc --group Plugins --key contrastEnabled true
-# Every window see-through: a KWin rule forcing opacity on normal windows and
-# dialogs (no window class given, so it matches all of them). Rule values:
-# 2 = Force. Types: 1 normal + 32 dialog. Change or delete it in System
-# Settings > Window Management > Window Rules ("Lunar: translucent windows").
-kwriteconfig6 --file kwinrulesrc --group General --key count 1
-kwriteconfig6 --file kwinrulesrc --group General --key rules lunar-translucent
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key Description "Lunar: translucent windows"
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key types 33
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key opacityactive 92
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key opacityactiverule 2
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key opacityinactive 84
-kwriteconfig6 --file kwinrulesrc --group lunar-translucent --key opacityinactiverule 2
-# Windows being moved or resized fade further, so you can see beneath them.
-kwriteconfig6 --file kwinrc --group Plugins --key translucencyEnabled true
-kwriteconfig6 --file kwinrc --group Effect-translucency --key MoveResize 75
+# See-through windows come from the Lunar Kvantum theme (Lunar Look), which
+# draws translucent backgrounds that KWin blurs. Forcing opacity on every
+# window instead, as an earlier version did, makes accelerated apps flicker;
+# undo that if it is present.
+kwriteconfig6 --file kwinrulesrc --group General --key count 0
+kwriteconfig6 --file kwinrulesrc --group General --key rules ""
+kwriteconfig6 --file kwinrc --group Plugins --key translucencyEnabled false
+kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle kvantum
 dbus-send --session --dest=org.kde.KWin --type=method_call /KWin org.kde.KWin.reconfigure 2>/dev/null
 
 # Layout: top bar with the clock, the moon launcher and the tray; a floating
@@ -52,5 +45,8 @@ sleep 1
 dbus-send --session --dest=org.kde.plasmashell --type=method_call /PlasmaShell \
     org.kde.PlasmaShell.evaluateScript \
     string:'panels().forEach(function (p) { p.opacity = "translucent"; })' 2>/dev/null
+
+# Accent, transparency and wallpaper from Lunar Look.
+lunar-look apply
 
 mkdir -p "$(dirname "$marker")" && touch "$marker"

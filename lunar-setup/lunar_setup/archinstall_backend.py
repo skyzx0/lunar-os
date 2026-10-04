@@ -70,6 +70,7 @@ DESKTOP_COMMON = [
     "xdg-user-dirs",
     "power-profiles-daemon", "upower",   # battery, power-saver mode
     "bluez", "bluez-utils",
+    "python", "python-gobject", "gtk4", "libadwaita",   # Lunar Look
 ]
 
 # Per desktop, on top of the above and archinstall's own selection.
@@ -77,12 +78,13 @@ DESKTOP_EXTRAS = {
     # plasma-meta is the full Plasma: network applet (plasma-nm), battery
     # and power (powerdevil), volume (plasma-pa), Bluetooth (bluedevil),
     # display settings (kscreen), themes for GTK apps. Then the usual apps.
-    "plasma": ["plasma-meta", "konsole", "dolphin", "kate", "ark",
+    "plasma": ["plasma-meta", "kvantum", "konsole", "dolphin", "kate", "ark",
                "spectacle", "gwenview", "okular", "kcalc", "filelight"],
     # The gnome group is already complete; power profiles come from above.
     "gnome": [],
     "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
-                 "blueman", "pavucontrol", "brightnessctl", "swaybg", "btop", "cava"],
+                 "blueman", "pavucontrol", "brightnessctl", "swaybg", "btop", "cava",
+                 "git", "base-devel"],                  # lunar-ii builds illogical-impulse
     "sway": ["network-manager-applet", "blueman", "thunar", "wofi", "swayidle", "swaylock"],
     "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
            "brightnessctl", "thunar", "picom", "feh"],
@@ -346,7 +348,6 @@ DESKTOP_USER_FILES = {
         ("desktops/hyprland/cava.conf", ".config/cava/config"),
         ("desktops/hyprland/dunstrc", ".config/dunst/dunstrc"),
         ("desktops/hyprland/wofi/config", ".config/wofi/config"),
-        ("desktops/hyprland/wofi/style.css", ".config/wofi/style.css"),
         ("desktops/waybar/config-hyprland.json", ".config/waybar/hyprland.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
     ] + _GTK_DARK,
@@ -354,14 +355,12 @@ DESKTOP_USER_FILES = {
         ("desktops/sway/config", ".config/sway/config"),
         ("desktops/sway/foot.ini", ".config/foot/foot.ini"),
         ("desktops/hyprland/wofi/config", ".config/wofi/config"),
-        ("desktops/hyprland/wofi/style.css", ".config/wofi/style.css"),
         ("desktops/waybar/config-sway.json", ".config/waybar/sway.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
     ] + _GTK_DARK,
     "i3": [
         ("desktops/i3/config", ".config/i3/config"),
         ("desktops/i3/i3status.conf", ".config/i3status/config"),
-        ("desktops/i3/picom.conf", ".config/picom/picom.conf"),
         ("desktops/i3/alacritty.toml", ".config/alacritty/alacritty.toml"),
     ] + _GTK_DARK,
 }
@@ -495,6 +494,22 @@ def lunar_layer(cfg: Config) -> list:
         cmds.append(write_asset_cmd("plasma/lunar-wallpaper.png",
                                     "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"))
 
+    # Lunar Look: one settings app for the look of every desktop.
+    if graphical(cfg):
+        cmds += [
+            write_asset_cmd("look/lunar-look", "/usr/local/bin/lunar-look", "755"),
+            write_asset_cmd("look/lunar-look-app", "/usr/local/lib/lunaros/lunar-look-app"),
+            write_asset_cmd("look/look.json", "/etc/lunaros/look.json"),
+            write_asset_cmd("look/lunar-look.desktop", "/usr/share/applications/lunar-look.desktop"),
+        ]
+
+    # Hyprland: lunar-ii, which installs illogical-impulse (offered at first login).
+    if "hyprland" in cfg.all_desktops():
+        cmds += [
+            write_asset_cmd("ii/lunar-ii", "/usr/local/bin/lunar-ii", "755"),
+            write_asset_cmd("ii/lunar-ii.desktop", "/usr/share/applications/lunar-ii.desktop"),
+        ]
+
     # GNOME: dark, the moon, a Lunar dock - as system defaults, so anything
     # changed in Settings overrides them.
     if "gnome" in cfg.all_desktops():
@@ -509,6 +524,15 @@ def lunar_layer(cfg: Config) -> list:
                                for f in DESKTOP_USER_FILES.get(d, [])))
     if files:
         cmds += user_files_cmds(cfg, files)
+    if graphical(cfg) and cfg.username:
+        # Generate the user's Lunar Look files now, as that user. Hyprland and
+        # foot refuse a missing included file, so they get an empty one if the
+        # run fails for any reason - the defaults in the main configs still hold.
+        u, home = cfg.username, f"/home/{cfg.username}"
+        cmds.append(
+            f"runuser -u {u} -- env HOME={home} /usr/local/bin/lunar-look apply --no-reload || true; "
+            f"for f in .config/hypr/lunar-look.conf .config/foot/lunar-look.ini .config/sway/lunar-look .config/i3/lunar-look; do "
+            f"[ -d {home}/$(dirname $f) ] && [ ! -e {home}/$f ] && runuser -u {u} -- touch {home}/$f; done; true")
     if greeter_for(cfg) == "lightdm-gtk-greeter":
         cmds.append(write_asset_cmd("desktops/common/lightdm-gtk-greeter.conf",
                                     "/etc/lightdm/lightdm-gtk-greeter.conf"))

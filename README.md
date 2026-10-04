@@ -54,3 +54,29 @@ System Settings and it stays changed.
 There is no pacman command on Lunar OS: typing it points to `ltxs`. The
 engine underneath stays installed, because ltxs and updates run on it, and
 scripts that call it are unaffected.
+
+## Lunar Look
+
+One app for the look of every desktop: accent colour, terminal and window
+transparency, blur, corner rounding, animation speed and wallpaper. Open it
+from Settings in the app menu, with Super+I on Hyprland, Sway and i3, or run
+`lunar-look`. Changes apply at once to everything running.
+
+    lunar-look apply           apply the current settings everywhere
+    lunar-look set KEY VALUE   e.g. lunar-look set accent "#ff8fb1"
+    lunar-look reset           back to the Lunar defaults
+
+Settings are in ~/.config/lunaros/look.json. Each program's own config
+includes a small generated file, so your own edits to those configs stay.
+On Plasma, translucent windows come from the Lunar Kvantum theme, generated
+from the accent, rather than by forcing window opacity.
+
+## Hyprland: illogical-impulse
+
+Hyprland installs offer illogical-impulse (github.com/end-4/dots-hyprland,
+GPL-3.0) at the first login: a complete desktop with bar, overview,
+sidebars, launcher and its own settings panel. `lunar-ii` installs it as
+the user, at a pinned commit that matches the Hyprland version Lunar ships,
+and adds the user's keyboard layout, quick key repeat, the moon wallpaper
+and the moon icon. Lunar's own Hyprland setup is kept in
+~/.config/hypr.lunar-classic. Run `lunar-ii` any time to install it later.

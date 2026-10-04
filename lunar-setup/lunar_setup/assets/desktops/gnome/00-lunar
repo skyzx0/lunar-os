@@ -18,7 +18,7 @@ picture-options='zoom'
 primary-color='#000000'
 
 [org/gnome/shell]
-favorite-apps=['org.gnome.Nautilus.desktop', 'firefox.desktop', 'org.gnome.Console.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Settings.desktop']
+favorite-apps=['org.gnome.Nautilus.desktop', 'firefox.desktop', 'org.gnome.Console.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Settings.desktop', 'lunar-look.desktop']
 
 [org/gnome/desktop/peripherals/keyboard]
 delay=uint32 250

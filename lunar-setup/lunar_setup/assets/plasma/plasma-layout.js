@@ -29,7 +29,8 @@ tasks.writeConfig("launchers", [
     "applications:firefox.desktop",
     "applications:org.kde.konsole.desktop",
     "applications:org.kde.kate.desktop",
-    "applications:systemsettings.desktop"
+    "applications:systemsettings.desktop",
+    "applications:lunar-look.desktop"
 ].join(","));
 
 for (var i = 0; i < old.length; i++) {
