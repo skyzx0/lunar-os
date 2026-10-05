@@ -73,10 +73,14 @@ from the accent, rather than by forcing window opacity.
 
 ## Hyprland: illogical-impulse
 
-Hyprland installs offer illogical-impulse (github.com/end-4/dots-hyprland,
-GPL-3.0) at the first login: a complete desktop with bar, overview,
-sidebars, launcher and its own settings panel. `lunar-ii` installs it as
-the user, at a pinned commit that matches the Hyprland version Lunar ships,
-and adds the user's keyboard layout, quick key repeat, the moon wallpaper
-and the moon icon. Lunar's own Hyprland setup is kept in
-~/.config/hypr.lunar-classic. Run `lunar-ii` any time to install it later.
+Hyprland comes as illogical-impulse (github.com/end-4/dots-hyprland,
+GPL-3.0), installed during the Lunar installation and themed as Lunar: its
+colour pipeline builds the palette from the moon wallpaper and the Lunar
+accent on first launch, with transparency on, the moon as the bar icon and
+the user's keyboard layout. It is pinned to a commit matching the Hyprland
+version Lunar ships, and installed as the user (its installer refuses root),
+with a sudo rule that exists only while it runs.
+
+If that part fails - no internet, a build error - the Lunar installation
+still completes with Lunar's own Hyprland setup, and the first login offers
+it again. Details: /var/log/lunaros-ii-install.log. `lunar-ii` reinstalls it.

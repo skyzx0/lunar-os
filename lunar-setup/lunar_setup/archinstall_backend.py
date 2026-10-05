@@ -559,6 +559,13 @@ def lunar_layer(cfg: Config) -> list:
                             "/usr/share/sddm/themes/breeze/theme.conf.user"),
         ]
 
+    # Hyprland: illogical-impulse, installed now and themed as Lunar. It runs
+    # as the user (its installer refuses root) and never fails the Lunar
+    # installation: on any problem Lunar's own Hyprland setup stays and the
+    # first login offers it again. Log: /var/log/lunaros-ii-install.log
+    if "hyprland" in cfg.all_desktops() and cfg.username:
+        cmds.append(f"/usr/local/bin/lunar-ii --install-time {cfg.username} || true")
+
     # Boot splash: the half moon, name and slogan on black while the system
     # starts, and the passphrase prompt when the disk is encrypted. Needs the
     # theme, the plymouth hook in the boot image, and "splash" on the kernel
@@ -773,6 +780,11 @@ def install(cfg: Config, emit) -> None:
     require_network(log=emit)
     emit("  mirrors reachable")
 
+    if "hyprland" in cfg.all_desktops():
+        emit("Hyprland comes with illogical-impulse, installed and themed as Lunar.", accent=True)
+        emit("  That part is built from source near the end: allow 15-30 extra minutes,")
+        emit("  and keep the internet connected.")
+        emit("")
     emit("Checking the package list", accent=True)
     config_packages = available_packages(extra_packages(cfg), emit)
 
