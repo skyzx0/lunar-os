@@ -160,7 +160,13 @@ if [[ "${1:-}" == "--install-time" ]]; then
     # Its installer needs sudo without a password prompt while it runs here.
     # Removed again however this ends.
     mkdir -p "$(dirname "$sudoers")"
-    echo "$user ALL=(ALL) NOPASSWD: ALL" > "$sudoers"; chmod 440 "$sudoers"
+    # "!authenticate" as well as NOPASSWD: archinstall gives the user a normal
+    # password rule, and with that present "sudo -v" - the first thing the
+    # illogical-impulse installer runs - still asks for a password, which
+    # nobody can type during installation. This made every install fall back
+    # to the first-login offer.
+    printf 'Defaults:%s !authenticate\n%s ALL=(ALL) NOPASSWD: ALL\n' "$user" "$user" > "$sudoers"
+    chmod 440 "$sudoers"
     trap 'rm -f "$sudoers"' EXIT
 
     as_user() { runuser -u "$user" -- env HOME="$home" USER="$user" LOGNAME="$user" "$@"; }
