@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# The welcome on the USB stick's console.
+a=$'\e[38;2;150;160;255m'; d=$'\e[2m'; b=$'\e[1m'; o=$'\e[0m'
+mapfile -t logo < /etc/lunaros/fetch-logo.txt
+lines=(
+  ""
+  "${b}Lunar OS${o} ${d}1.0 (Eclipse)${o}"
+  "${d}See what's on the other side of the moon.${o}"
+  ""
+  "${a}Install${o}"
+  "  ${b}lunar-install${o}        guided, with a menu"
+  "  ${b}lunar-guide${o}          step by step by hand"
+  ""
+  "${a}Internet${o}"
+  "  wired works by itself"
+  "  ${b}nmtui${o}                Wi-Fi"
+  ""
+  "${a}Tools${o}"
+  "  lsblk  cfdisk  mkfs.*  mount"
+  "  lunar-genconf  lunarstrap  lunar-chroot"
+)
+echo
+for ((i = 0; i < ${#logo[@]} || i < ${#lines[@]}; i++)); do
+  l=${logo[i]:-}; l=${l#|}
+  printf '  %s%-20s%s   %s\n' "$a" "$l" "$o" "${lines[i]:-}"
+done
+echo

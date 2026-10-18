@@ -1,120 +1,194 @@
 #!/usr/bin/env bash
-# lunar-install - the guided way to install Lunar OS.
+# lunar-install - install Lunar OS.
 #
-# Asks a few questions, then does the manual install for you: partitions the
-# disk, mounts it, writes system.conf (lunar-genconf), fills in your answers
-# and installs (lunarstrap). For the manual way, see: lunar-guide
+# A menu of choices you can change in any order: disk, file system, user,
+# password, computer name, time zone, keyboard, desktop, apps. "Install" does
+# the rest: partitions, formats, mounts, writes system.conf (lunar-genconf)
+# and installs (lunarstrap). To do those steps yourself: lunar-guide.
 #
-# Test hook: LUNAR_INSTALL_ANSWERS=file with DISK= USERNAME= FULLNAME=
-# PASSWORD= HOSTNAME= TIMEZONE= KEYMAP= lines skips the questions.
+# Test hook: LUNAR_INSTALL_ANSWERS=file setting DISK USERNAME FULLNAME
+# PASSWORD HOSTNAME TIMEZONE KEYMAP (and optionally FS DESKTOP APPS) skips the
+# menu.
 
 set -uo pipefail
-TARGET=/mnt
+TARGET=${LUNAR_INSTALL_TARGET:-/mnt}
 LOG=${LUNAR_INSTALL_LOG:-/tmp/lunar-install.log}
 BACK="Lunar OS installer"
+[[ -r /etc/lunar/dialogrc ]] && export DIALOGRC=${DIALOGRC:-/etc/lunar/dialogrc}
 
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 exec 3>&1
 : > "$LOG"
 log() { echo "-- $*" >> "$LOG"; }
-ask() { dialog --backtitle "$BACK" --title "Lunar OS" "$@" 2>&1 1>&3; }
 say() { printf '\e[38;2;150;160;255m::\e[0m %s\n' "$*"; log "$*"; }
+ask() { dialog --backtitle "$BACK" --colors "$@" 2>&1 1>&3; }
+msg() { ask --title "$1" --msgbox "\n$2" 10 62; }
 die() {
     echo "!! $*" >> "$LOG"
-    [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]] ||
-        dialog --backtitle "$BACK" --title "Installation stopped" --msgbox "$*\n\nDetails: $LOG" 12 66
+    [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]] || msg "Installation stopped" "$*\n\nDetails: $LOG"
     echo "Installation stopped: $*" >&2
     umount -R "$TARGET" 2>/dev/null
     exit 1
 }
 part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }
-# set KEY in [SECTION] of system.conf to VALUE
-setconf() {
-    local file=$1 section=$2 key=$3 value=$4
-    awk -v s="[$section]" -v k="$key" -v v="$value" '
+setconf() {   # setconf FILE SECTION KEY VALUE
+    awk -v s="[$2]" -v k="$3" -v v="$4" '
         /^\[/ { in_s = ($0 == s) }
         in_s && $0 ~ "^[[:space:]]*" k "[[:space:]]*=" { sub(/=.*/, "= " v); done = 1 }
         { print }
-        END { if (!done) exit 3 }' "$file" > "$file.new" && mv "$file.new" "$file"
+        END { if (!done) exit 3 }' "$1" > "$1.new" && mv "$1.new" "$1"
 }
 
 LIVE_DISK=/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /iso 2>/dev/null || findmnt -no SOURCE /)" 2>/dev/null | head -1)
 
-# ---- the questions -------------------------------------------------------------
+# ---- choices -------------------------------------------------------------------
+DISK="" FS="ext4" USERNAME="" FULLNAME="" PASSWORD="" HOSTNAME="lunar"
+TIMEZONE="UTC" KEYMAP="us" DESKTOP="lunar" APPS="firefox"
+
+APP_CHOICES=(
+    firefox      "Firefox - web browser"
+    chromium     "Chromium - web browser"
+    vscode       "Visual Studio Code - code editor"
+    libreoffice  "LibreOffice - documents, sheets, slides"
+    vlc          "VLC - video and music"
+    gimp         "GIMP - image editor"
+    obs-studio   "OBS Studio - screen recording"
+    thunderbird  "Thunderbird - email"
+    discord      "Discord - chat"
+    spotify      "Spotify - music"
+    git          "Git - version control"
+    neovim       "Neovim - text editor"
+)
+
+pick_disk() {
+    local items=() name size model
+    while read -r name size model; do
+        [[ "$name" == "$LIVE_DISK" ]] && continue
+        items+=("$name" "$size  ${model:-disk}")
+    done < <(lsblk -dpno NAME,SIZE,MODEL -e 1,7,11 2>/dev/null | awk '$1 !~ /zram/')
+    if (( ${#items[@]} == 0 )); then msg "No disk" "No disk found to install on (other than this USB stick)."; return; fi
+    DISK=$(ask --title "Disk" --menu "Lunar OS will erase this disk completely." 15 66 6 "${items[@]}") || DISK=""
+}
+pick_fs() {
+    FS=$(ask --title "File system" --default-item "$FS" --menu "" 11 66 3 \
+        ext4  "Simple and fast (recommended)" \
+        btrfs "Compressed, with snapshots" \
+        xfs   "Fast for large files") || FS=ext4
+}
+pick_user() {
+    local name
+    FULLNAME=$(ask --title "Your name" --inputbox "" 8 50 "$FULLNAME") || return
+    FULLNAME=${FULLNAME//#/}
+    while :; do
+        name=$(ask --title "Username" --inputbox "Lowercase, no spaces" 8 50 \
+            "${USERNAME:-$(echo "${FULLNAME%% *}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')}") || return
+        [[ "$name" =~ ^[a-z_][a-z0-9_-]{0,30}$ && "$name" != root ]] && { USERNAME=$name; return; }
+        msg "Username" "Use lowercase letters and digits, starting with a letter."
+    done
+}
+pick_password() {
+    local p1 p2
+    while :; do
+        p1=$(ask --title "Password" --insecure --passwordbox "" 8 50) || return
+        p2=$(ask --title "Password" --insecure --passwordbox "Once more" 8 50) || return
+        [[ -n "$p1" && "$p1" == "$p2" ]] && { PASSWORD=$p1; return; }
+        msg "Password" "The passwords don't match (or are empty)."
+    done
+}
+pick_hostname() {
+    local h
+    h=$(ask --title "Computer name" --inputbox "" 8 50 "$HOSTNAME") || return
+    [[ "$h" =~ ^[A-Za-z0-9-]{1,63}$ ]] && HOSTNAME=$h || msg "Computer name" "Letters, digits and - only."
+}
+pick_timezone() {
+    local zones=() z
+    for z in Europe/Vienna Europe/Berlin Europe/Zurich Europe/Rome Europe/London Europe/Paris \
+             Europe/Madrid Europe/Warsaw America/New_York America/Chicago America/Denver \
+             America/Los_Angeles America/Sao_Paulo Asia/Tokyo Asia/Shanghai Asia/Kolkata \
+             Asia/Dubai Australia/Sydney UTC; do zones+=("$z" ""); done
+    zones+=("other" "type it in")
+    z=$(ask --title "Time zone" --default-item "$TIMEZONE" --menu "" 20 50 12 "${zones[@]}") || return
+    if [[ "$z" == other ]]; then z=$(ask --title "Time zone" --inputbox "For example Europe/Vienna" 8 50 "$TIMEZONE") || return; fi
+    [[ "$z" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$ ]] && TIMEZONE=$z
+}
+pick_keymap() {
+    local k
+    k=$(ask --title "Keyboard" --default-item "$KEYMAP" --menu "" 20 50 14 \
+        us "English (US)" gb "English (UK)" de "German" at "Austrian" ch "Swiss" \
+        it "Italian" fr "French" es "Spanish" pt "Portuguese" br "Portuguese (Brazil)" \
+        se "Swedish" no "Norwegian" dk "Danish" pl "Polish" nl "Dutch" cz "Czech") || return
+    KEYMAP=$k
+    loadkeys "$k" >/dev/null 2>&1 || true
+}
+pick_desktop() {
+    DESKTOP=$(ask --title "Desktop" --default-item "$DESKTOP" --menu "" 10 66 2 \
+        lunar   "The Lunar desktop" \
+        console "Text only (a server, or set it up yourself)") || DESKTOP=lunar
+}
+pick_apps() {
+    local items=() i n on
+    for ((i = 0; i < ${#APP_CHOICES[@]}; i += 2)); do
+        n=${APP_CHOICES[i]}; on=off
+        [[ " $APPS " == *" $n "* ]] && on=on
+        items+=("$n" "${APP_CHOICES[i+1]}" "$on")
+    done
+    APPS=$(ask --title "Apps" --separate-output --checklist "Space selects. More later with: ltxs install NAME" 20 70 12 "${items[@]}" | tr '\n' ' ') || return
+}
+
+show() { [[ -n "$1" ]] && printf '%s' "$1" || printf '\\Z1not set\\Zn'; }
+menu() {
+    local choice
+    while :; do
+        choice=$(ask --title "Install Lunar OS" --no-cancel --default-item "${choice:-disk}" \
+            --menu "\nChoose an item to change it. Then: Install.\n" 22 72 12 \
+            disk     "Disk          $(show "$DISK")" \
+            fs       "File system   $FS" \
+            user     "User          $(show "$USERNAME")" \
+            password "Password      $( [[ -n "$PASSWORD" ]] && echo set || show "")" \
+            hostname "Computer      $HOSTNAME" \
+            timezone "Time zone     $TIMEZONE" \
+            keyboard "Keyboard      $KEYMAP" \
+            desktop  "Desktop       $DESKTOP" \
+            apps     "Apps          ${APPS:-none}" \
+            ""       "" \
+            install  "\\Zb\\Z4Install\\Zn" \
+            quit     "Quit") || return 1
+        case "$choice" in
+            disk) pick_disk ;; fs) pick_fs ;; user) pick_user ;; password) pick_password ;;
+            hostname) pick_hostname ;; timezone) pick_timezone ;; keyboard) pick_keymap ;;
+            desktop) pick_desktop ;; apps) pick_apps ;;
+            quit) clear; exit 0 ;;
+            install)
+                local missing=""
+                [[ -n "$DISK" ]] || missing+=" disk,"
+                [[ -n "$USERNAME" ]] || missing+=" user,"
+                [[ -n "$PASSWORD" ]] || missing+=" password,"
+                if [[ -n "$missing" ]]; then msg "Not yet" "Still to choose:${missing%,}."; continue; fi
+                ask --title "Install" --defaultno --yes-label "Erase and install" --no-label "Back" --yesno \
+                    "\nEverything on \\Zb$DISK\\Zn ($(lsblk -dno SIZE,MODEL "$DISK" | xargs)) will be erased.\n\nInstall Lunar OS now?" 11 64 && return 0 ;;
+        esac
+    done
+}
+
 if [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
     # shellcheck disable=SC1090
     . "$LUNAR_INSTALL_ANSWERS"
 else
-    choice=$(ask --menu "\nHow do you want to install Lunar OS?" 13 64 2 \
-        guided "Answer a few questions (recommended)" \
-        manual "Do it yourself, step by step") || exit 0
-    if [[ "$choice" == manual ]]; then clear; exec lunar-guide; fi
-
-    ask --yes-label "Start" --no-label "Cancel" --yesno \
-"\nThe disk you choose next is erased completely.\nConnect to the internet first (the Wi-Fi icon at the top right)." 10 64 || exit 0
-
-    disks=()
-    while read -r name size model; do
-        [[ "$name" == "$LIVE_DISK" ]] && continue
-        disks+=("$name" "$size  ${model:-disk}")
-    done < <(lsblk -dpno NAME,SIZE,MODEL -e 1,7,11 2>/dev/null | awk '$1 !~ /zram/')
-    (( ${#disks[@]} )) || die "No disk found to install on (other than this USB stick)."
-    DISK=$(ask --menu "Install on which disk? Everything on it is erased." 15 66 6 "${disks[@]}") || exit 0
-    ask --defaultno --yes-label "Erase and install" --no-label "Back" --yesno \
-        "\nErase everything on\n\n    $DISK  ($(lsblk -dno SIZE,MODEL "$DISK" | xargs))\n\nand install Lunar OS?" 12 62 || exit 0
-
-    FULLNAME=$(ask --inputbox "Your name" 8 50 "") || exit 0
-    while :; do
-        USERNAME=$(ask --inputbox "Username (lowercase, no spaces)" 8 50 \
-            "$(echo "${FULLNAME%% *}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')") || exit 0
-        [[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ && "$USERNAME" != root ]] && break
-        ask --msgbox "Use lowercase letters and digits, starting with a letter." 7 52
-    done
-    while :; do
-        PASSWORD=$(ask --insecure --passwordbox "Password" 8 50) || exit 0
-        again=$(ask --insecure --passwordbox "Password again" 8 50) || exit 0
-        [[ -n "$PASSWORD" && "$PASSWORD" == "$again" ]] && break
-        ask --msgbox "The passwords don't match (or are empty). Try again." 7 52
-    done
-    HOSTNAME=$(ask --inputbox "Name of this computer" 8 50 "lunar") || exit 0
-
-    zones=()
-    for z in Europe/Vienna Europe/Berlin Europe/Zurich Europe/Rome Europe/London Europe/Paris \
-             Europe/Madrid America/New_York America/Chicago America/Los_Angeles \
-             America/Sao_Paulo Asia/Tokyo Asia/Shanghai Asia/Kolkata Australia/Sydney UTC; do
-        zones+=("$z" "")
-    done
-    zones+=("other" "type it in")
-    TIMEZONE=$(ask --menu "Time zone" 20 50 12 "${zones[@]}") || exit 0
-    if [[ "$TIMEZONE" == other ]]; then
-        TIMEZONE=$(ask --inputbox "Time zone (for example Europe/Vienna)" 8 50 "UTC") || exit 0
-    fi
-
-    KEYMAP=$(ask --menu "Keyboard layout" 18 50 10 \
-        us "English (US)" gb "English (UK)" de "German" at "Austrian" ch "Swiss" \
-        it "Italian" fr "French" es "Spanish" pt "Portuguese" br "Portuguese (Brazil)" \
-        se "Swedish" no "Norwegian" dk "Danish" pl "Polish") || exit 0
+    menu || exit 0
 fi
-
-for v in DISK USERNAME PASSWORD HOSTNAME TIMEZONE KEYMAP; do
-    [[ -n "${!v:-}" ]] || die "Missing answer: $v"
-done
 FULLNAME=${FULLNAME:-$USERNAME}
-FULLNAME=${FULLNAME//#/}
-[[ "$HOSTNAME" =~ ^[A-Za-z0-9-]{1,63}$ ]] || HOSTNAME=lunar
-[[ "$TIMEZONE" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$ ]] || TIMEZONE=UTC
+for v in DISK USERNAME PASSWORD; do [[ -n "${!v:-}" ]] || die "Missing: $v"; done
 [[ -b "$DISK" ]] || die "$DISK is not a disk."
 [[ "$DISK" != "$LIVE_DISK" ]] || die "That is the USB stick Lunar OS is running from."
-log "disk $DISK user $USERNAME host $HOSTNAME tz $TIMEZONE keymap $KEYMAP"
+log "disk $DISK fs $FS user $USERNAME host $HOSTNAME tz $TIMEZONE keymap $KEYMAP desktop $DESKTOP apps $APPS"
 clear
 
-# ---- the manual install, done for you -------------------------------------------
+# ---- install ---------------------------------------------------------------------
 say "Partitioning $DISK"
 umount -R "$TARGET" 2>/dev/null
 for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2); do umount "$p" 2>/dev/null; swapoff "$p" 2>/dev/null; done
 wipefs -af "$DISK" >> "$LOG" 2>&1
 sgdisk --zap-all "$DISK" >> "$LOG" 2>&1
-# 1: BIOS boot (for computers without UEFI), 2: boot files, 3: the system.
 sgdisk -n1:0:+1M -t1:ef02 -c1:bios \
        -n2:0:+1G -t2:ef00 -c2:LUNAR-EFI \
        -n3:0:0   -t3:8304 -c3:lunar-root "$DISK" >> "$LOG" 2>&1 || die "Could not partition $DISK."
@@ -122,12 +196,27 @@ udevadm settle 2>/dev/null; partx -u "$DISK" 2>/dev/null; udevadm settle 2>/dev/
 EFI=$(part "$DISK" 2); ROOT=$(part "$DISK" 3)
 for _ in $(seq 20); do [[ -b "$ROOT" ]] && break; sleep 0.5; done
 
-say "Formatting"
+say "Formatting ($FS)"
 mkfs.fat -F 32 -n LUNAR-EFI "$EFI" >> "$LOG" 2>&1 || die "Could not format $EFI."
-mkfs.ext4 -F -q -L lunar-root "$ROOT" >> "$LOG" 2>&1 || die "Could not format $ROOT."
+case "$FS" in
+    btrfs) mkfs.btrfs -f -L lunar-root "$ROOT" >> "$LOG" 2>&1 ;;
+    xfs)   mkfs.xfs -f -L lunar-root "$ROOT" >> "$LOG" 2>&1 ;;
+    *)     mkfs.ext4 -F -q -L lunar-root "$ROOT" >> "$LOG" 2>&1 ;;
+esac || die "Could not format $ROOT."
 
 say "Mounting"
-mount "$ROOT" "$TARGET" || die "Could not mount $ROOT."
+mkdir -p "$TARGET"
+if [[ "$FS" == btrfs ]]; then
+    mount "$ROOT" "$TARGET" || die "Could not mount $ROOT."
+    btrfs subvolume create "$TARGET/@" >> "$LOG" 2>&1
+    btrfs subvolume create "$TARGET/@home" >> "$LOG" 2>&1
+    umount "$TARGET"
+    mount -o subvol=@,compress=zstd,noatime "$ROOT" "$TARGET" || die "Could not mount $ROOT."
+    mkdir -p "$TARGET/home"
+    mount -o subvol=@home,compress=zstd,noatime "$ROOT" "$TARGET/home" || die "Could not mount /home."
+else
+    mount "$ROOT" "$TARGET" || die "Could not mount $ROOT."
+fi
 mkdir -p "$TARGET/boot"
 mount -o umask=0077 "$EFI" "$TARGET/boot" || die "Could not mount $EFI."
 
@@ -139,15 +228,17 @@ setconf "$CONF" system timezone "$TIMEZONE"
 setconf "$CONF" system keyboard "$KEYMAP"
 setconf "$CONF" user name "$USERNAME"
 setconf "$CONF" user fullname "$FULLNAME"
+setconf "$CONF" desktop session "$DESKTOP"
+for a in $APPS; do echo "$a" >> "$CONF"; done
 cat "$CONF" >> "$LOG"
 
-LUNARSTRAP_PASSWORD=$PASSWORD LUNARSTRAP_LOG=$LOG.strap lunarstrap "$TARGET" || die "lunarstrap failed (details: $LOG.strap)"
+LUNARSTRAP_PASSWORD=$PASSWORD LUNARSTRAP_LOG=$LOG.strap lunarstrap "$TARGET" || die "Installing failed (details: $LOG.strap)"
 
 sync
 umount -R "$TARGET"
 log "done"
 if [[ -z "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
-    if ask --yes-label "Restart now" --no-label "Later" --yesno \
+    if ask --title "Done" --yes-label "Restart now" --no-label "Later" --yesno \
         "\nLunar OS is installed.\n\nRemove the USB stick when the screen goes dark,\nthen sign in as $USERNAME." 11 56; then
         systemctl reboot
     fi

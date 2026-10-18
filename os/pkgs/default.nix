@@ -33,8 +33,8 @@ in
     lunar-tools = final.symlinkJoin {
       name = "lunar-tools";
       paths = map (n: script n (with final; [
-        dialog gptfdisk dosfstools e2fsprogs util-linux coreutils gnused gnugrep gawk less
-      ])) [ "lunar-install" "lunar-genconf" "lunarstrap" "lunar-chroot" "lunar-guide" ];
+        dialog gptfdisk dosfstools e2fsprogs btrfs-progs xfsprogs kbd util-linux coreutils gnused gnugrep gawk less
+      ])) [ "lunar-install" "lunar-genconf" "lunarstrap" "lunar-chroot" "lunar-guide" "lunar-motd" ];
     };
 
     lunar-session = script "lunar-session" [ ];
