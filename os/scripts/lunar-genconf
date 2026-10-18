@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# lunar-genconf - write the settings for a new Lunar OS install.
+#
+#   lunar-genconf /mnt
+#
+# Run it after partitioning and mounting (the new root at /mnt, the boot
+# partition at /mnt/boot, any others below). It writes /mnt/etc/lunar/system.conf
+# with everything that is mounted now under [mounts], detects the hardware,
+# and fills in sensible defaults. Edit system.conf, then run lunarstrap /mnt.
+
+set -uo pipefail
+ROOT=${1:-}
+ENGINE_SRC=${LUNAR_ENGINE:-/var/lib/lunar/engine}
+die() { echo "lunar-genconf: $*" >&2; exit 1; }
+[[ -n "$ROOT" ]] || { printf '%b' 'Usage: lunar-genconf /mnt\n\nRun after partitioning and mounting the new system at /mnt (boot partition at\n/mnt/boot). Writes /mnt/etc/lunar/system.conf; edit it, then run: lunarstrap /mnt\n'; exit 1; }
+[[ $EUID -eq 0 ]] || die "run it as root (sudo lunar-genconf $ROOT)"
+mountpoint -q "$ROOT" || die "nothing is mounted at $ROOT - mount the new root partition there first"
+[[ -d "$ENGINE_SRC" ]] || die "the Lunar engine is missing at $ENGINE_SRC"
+
+CONF=$ROOT/etc/lunar/system.conf
+ENGINE=$ROOT/var/lib/lunar/engine
+[[ -e "$CONF" && "${2:-}" != "--force" ]] && die "$CONF already exists (add --force to write it again)"
+
+# The engine: what lunarstrap and ltxs build the system from.
+mkdir -p "$(dirname "$ENGINE")" "$(dirname "$CONF")"
+rm -rf "$ENGINE"
+cp -rL --no-preserve=mode,ownership "$ENGINE_SRC/." "$ENGINE/"
+chmod 700 "$ROOT/var/lib/lunar"
+mkdir -p "$ENGINE/host"
+
+# Hardware: drivers this computer needs at boot.
+if command -v nixos-generate-config >/dev/null; then
+    nixos-generate-config --root "$ROOT" --no-filesystems --show-hardware-config \
+        > "$ENGINE/host/hardware.nix" 2>/dev/null || die "could not detect the hardware"
+fi
+
+# [mounts]: every file system mounted under $ROOT, by UUID.
+mounts=""
+while read -r target source fstype; do
+    [[ "$source" == /dev/* ]] || continue
+    point=${target#"$ROOT"}; point=${point:-/}
+    uuid=$(blkid -s UUID -o value "$source" 2>/dev/null)
+    dev=${uuid:+UUID=$uuid}; dev=${dev:-$source}
+    case "$fstype" in
+        vfat)        opts="umask=0077" ;;
+        ext4|ext3)   opts="noatime" ;;
+        btrfs)       sub=$(findmnt -no OPTIONS "$target" | tr ',' '\n' | grep '^subvol=' | head -1)
+                     opts="noatime,compress=zstd${sub:+,$sub}" ;;
+        xfs|f2fs)    opts="noatime" ;;
+        *)           opts="defaults" ;;
+    esac
+    mounts+=$(printf '%-6s = %s %s %s' "$point" "$dev" "$fstype" "$opts")$'\n'
+done < <(findmnt -rn -R -o TARGET,SOURCE,FSTYPE "$ROOT" | sed 's/\[[^]]*\]//')
+while read -r name type; do
+    [[ "$type" == partition ]] || continue
+    uuid=$(blkid -s UUID -o value "$name" 2>/dev/null)
+    dev=${uuid:+UUID=$uuid}; dev=${dev:-$name}
+    mounts+="swap   = $dev"$'\n'
+done < <(swapon --show=NAME,TYPE --noheadings 2>/dev/null)
+
+# Boot: UEFI if this computer started in UEFI mode; otherwise the disk the
+# root partition is on gets the BIOS boot loader.
+if [[ -d /sys/firmware/efi ]]; then
+    boot="efi"; bootdisk=""
+else
+    boot="bios"
+    bootdisk="/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE "$ROOT")" | head -1)"
+fi
+
+keyboard=$(sed -n 's/.*XkbLayout"\? *"\([^"]*\)".*/\1/p' /etc/X11/xorg.conf.d/00-keyboard.conf 2>/dev/null | head -1)
+[[ -n "$keyboard" ]] || keyboard=$(grep -ho 'kb_layout *= *[a-z]*' /home/*/.config/hypr/hyprland.conf 2>/dev/null | head -1 | sed 's/.*= *//')
+keyboard=${keyboard:-us}
+
+cat > "$CONF" <<EOF
+# Lunar OS system settings.
+# Change anything here, then apply it with:  sudo ltxs apply
+
+[system]
+hostname = lunar
+timezone = UTC
+keyboard = $keyboard
+locale   = en_US.UTF-8
+boot     = $boot
+${bootdisk:+boot_disk = $bootdisk
+}
+[user]
+name     = lunar
+fullname = Lunar
+
+[desktop]
+# lunar (the Lunar desktop) or console (text only)
+session = lunar
+
+[mounts]
+# mount point = device  type  options
+${mounts}
+[apps]
+# One app per line. Easiest: sudo ltxs install NAME
+EOF
+chmod 644 "$CONF"
+echo "Wrote $CONF"
+echo "Edit it (nano $CONF): your user name, computer name, time zone, keyboard."
+echo "Then: lunarstrap $ROOT"

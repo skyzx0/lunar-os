@@ -1,0 +1,28 @@
+# Lunar OS notifications: rounded black glass, lavender edge.
+[global]
+font = Noto Sans 10
+corner_radius = 12
+frame_width = 1
+frame_color = "#969fff55"
+separator_color = frame
+padding = 12
+horizontal_padding = 14
+offset = (14, 14)
+origin = top-right
+width = 340
+
+[urgency_low]
+background = "#0a0a0ecc"
+foreground = "#9aa0b0"
+timeout = 4
+
+[urgency_normal]
+background = "#0a0a0ed9"
+foreground = "#e2e5f0"
+timeout = 6
+
+[urgency_critical]
+background = "#1a0a10e6"
+foreground = "#ffffff"
+frame_color = "#e06c75"
+timeout = 0

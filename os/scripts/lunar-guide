@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# lunar-guide - how to install Lunar OS by hand.
+exec less -R /etc/lunar/INSTALL.txt

@@ -1,0 +1,62 @@
+{
+    "layer": "top",
+    "position": "top",
+    "height": 34,
+    "spacing": 6,
+    "modules-left": [
+        "custom/moon",
+        "hyprland/workspaces"
+    ],
+    "modules-center": [
+        "clock"
+    ],
+    "modules-right": [
+        "pulseaudio",
+        "network",
+        "bluetooth",
+        "battery",
+        "tray"
+    ],
+    "custom/moon": {
+        "format": "\u25d7",
+        "tooltip": false,
+        "on-click": "wofi --show drun"
+    },
+    "clock": {
+        "format": "{:%H:%M}",
+        "format-alt": "{:%a %d %b  %H:%M}",
+        "tooltip-format": "{:%A %d %B %Y}"
+    },
+    "pulseaudio": {
+        "format": "vol {volume}%",
+        "format-muted": "muted",
+        "on-click": "pavucontrol"
+    },
+    "network": {
+        "format-wifi": "wifi {essid}",
+        "format-ethernet": "wired",
+        "format-disconnected": "offline",
+        "tooltip-format": "{ifname} {ipaddr}",
+        "on-click": "nm-connection-editor"
+    },
+    "bluetooth": {
+        "format": "bt",
+        "format-off": "",
+        "format-disabled": "",
+        "on-click": "blueman-manager"
+    },
+    "battery": {
+        "format": "bat {capacity}%",
+        "format-charging": "chg {capacity}%",
+        "states": {
+            "warning": 25,
+            "critical": 10
+        }
+    },
+    "tray": {
+        "spacing": 8
+    },
+    "margin-top": 6,
+    "margin-left": 10,
+    "margin-right": 10
+}

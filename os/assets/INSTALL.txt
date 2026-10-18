@@ -1,0 +1,68 @@
+LUNAR OS - INSTALLING BY HAND
+=============================
+
+The guided installer (sudo lunar-install) does all of this for you. This is the
+same install, step by step, for when you want to choose everything yourself.
+Become root first:  sudo -i
+
+1. CONNECT TO THE INTERNET
+   Wired works by itself. Wi-Fi:   nmtui
+   Check:                          ping -c 3 github.com
+
+2. FIND YOUR DISK
+   lsblk
+   (for example /dev/sda or /dev/nvme0n1 - everything on it will be erased)
+
+3. PARTITION
+   cfdisk /dev/sda          (choose "gpt")
+   Make:
+     1 GB     type "EFI System"          - the boot files
+     the rest type "Linux filesystem"     - the system
+   Optional: a swap partition, type "Linux swap".
+   On an old computer without UEFI, also make a 1 MB partition of type
+   "BIOS boot" at the start.
+
+4. FORMAT
+   mkfs.fat -F 32 -n LUNAR-EFI /dev/sda1
+   mkfs.ext4 -L lunar-root /dev/sda2
+   (btrfs, xfs and f2fs work too)
+   Swap, if you made it:   mkswap /dev/sda3 && swapon /dev/sda3
+
+5. MOUNT
+   mount /dev/sda2 /mnt
+   mkdir -p /mnt/boot
+   mount -o umask=0077 /dev/sda1 /mnt/boot
+   Anything else (a separate /home, ...) goes below /mnt now too.
+
+6. WRITE THE SETTINGS
+   lunar-genconf /mnt
+   It writes /mnt/etc/lunar/system.conf from what is mounted. Open it:
+   nano /mnt/etc/lunar/system.conf
+   and set:
+     [system]  hostname, timezone (like Europe/Vienna), keyboard (like de)
+     [user]    name (your login, lowercase) and fullname
+     [desktop] session = lunar  (the Lunar desktop)  or  console  (text only)
+     [apps]    the apps to install with it, one per line
+   The [mounts] section is already filled in.
+
+7. INSTALL
+   lunarstrap /mnt
+   It installs everything in system.conf, the boot loader, and asks for
+   your password at the end.
+
+8. ANYTHING ELSE
+   lunar-chroot /mnt        a shell inside the new system
+   exit
+
+9. RESTART
+   umount -R /mnt
+   reboot
+   Remove the USB stick when the screen goes dark.
+
+AFTER INSTALLING
+   ltxs install NAME        install an app (ltxs search NAME to find it)
+   ltxs update              update everything
+   nano /etc/lunar/system.conf, then  sudo ltxs apply   change a setting
+   ltxs rollback            undo the last change
+   Every change is a new version; older ones stay in the boot menu
+   (hold Space while the computer starts).

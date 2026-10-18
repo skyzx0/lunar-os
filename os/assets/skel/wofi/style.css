@@ -1,0 +1,26 @@
+/* Lunar OS launcher: centred black glass, lavender selection. */
+window {
+    background-color: rgba(10, 10, 14, 0.86);
+    border: 1px solid rgba(150, 159, 255, 0.35);
+    border-radius: 16px;
+    font-family: "Noto Sans", sans-serif;
+    font-size: 14px;
+}
+#outer-box { padding: 14px; }
+#input {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #e2e5f0;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+}
+#entry {
+    padding: 7px 10px;
+    border-radius: 10px;
+}
+#entry:selected {
+    background-color: #969fff;
+}
+#text { color: #e2e5f0; margin-left: 6px; }
+#entry:selected #text { color: #000000; }

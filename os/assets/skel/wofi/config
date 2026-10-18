@@ -1,0 +1,10 @@
+show=drun
+prompt=Search
+location=center
+width=560
+height=420
+allow_images=true
+image_size=24
+insensitive=true
+no_actions=true
+hide_scroll=true

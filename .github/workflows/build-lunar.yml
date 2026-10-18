@@ -1,0 +1,54 @@
+name: Build Lunar OS
+
+# Builds the Lunar OS USB image from os/. Almost everything arrives
+# ready-made, so this takes about 15-30 minutes.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/share/swift /usr/local/.ghcup
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Engine
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            max-jobs = auto
+
+      - name: Build
+        run: nix build ./os#iso -L
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(date -u +%Y%m%d-%H%M)
+          name="lunar-os-$v.iso"
+          mkdir out
+          cp result/iso/*.iso "out/$name"
+          cd out
+          sha256sum "$name" > SHA256SUMS
+          ls -la
+          # GitHub takes files up to 2 GB; a bigger image goes up in parts.
+          if [ "$(stat -c %s "$name")" -gt 2000000000 ]; then
+            split -b 1900M -d -a 1 "$name" "$name.part"
+            rm "$name"
+          fi
+          gh release create "lunar-$v" ./* -R "$GITHUB_REPOSITORY" \
+            --title "Lunar OS $v" \
+            --notes "Write the .iso to a USB stick (if it comes in parts, join them first: cat lunar-os-*.part* > the .iso name). Boot it, then: sudo lunar-install (guided) or lunar-guide (by hand)."

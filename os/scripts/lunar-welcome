@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# lunar-welcome - on the USB stick, a terminal that offers to install Lunar OS.
+[[ -e /etc/lunaros/live ]] || exit 0
+[[ -n "${LUNAR_WELCOME_INNER:-}" ]] || exec env LUNAR_WELCOME_INNER=1 kitty --class lunar-welcome "$0"
+fastfetch
+printf '\n  \e[38;2;150;160;255mThis is Lunar OS running from the USB stick.\e[0m\n'
+printf '  Install it on this computer:  \e[1msudo lunar-install\e[0m\n'
+printf '  Or by hand, step by step:      \e[1mlunar-guide\e[0m\n'
+printf '  \e[2mConnect to Wi-Fi first with the icon at the top right.\e[0m\n\n'
+exec bash -l

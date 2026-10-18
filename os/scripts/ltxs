@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# ltxs - the Lunar OS package manager.
+
+set -uo pipefail
+CONF=${LTXS_CONF:-/etc/lunar/system.conf}
+ENGINE=${LTXS_ENGINE:-/var/lib/lunar/engine}
+LOG=${LTXS_LOG:-/var/log/ltxs.log}
+HOST=lunar
+PROFILE=/nix/var/nix/profiles/system
+
+a=$'\e[38;2;150;160;255m'; d=$'\e[2m'; r=$'\e[31m'; g=$'\e[32m'; o=$'\e[0m'
+[[ -t 1 ]] || { a=; d=; r=; g=; o=; }
+say()  { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+fail() { printf '%serror:%s %s\n' "$r" "$o" "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$CMD" "$@"; }
+engine() { nix --extra-experimental-features 'nix-command flakes' "$@"; }
+pkgs="$ENGINE#nixosConfigurations.$HOST.pkgs"
+
+usage() {
+    cat <<EOF
+ltxs - the Lunar OS package manager
+
+  ltxs install APP...   install apps
+  ltxs remove APP...    remove apps
+  ltxs list             installed apps
+  ltxs search WORD      find apps (over 100,000)
+  ltxs info APP         what an app is
+  ltxs try APP          run an app once without installing it
+  ltxs update           update Lunar OS and every app
+  ltxs apply            apply changes made to $CONF
+  ltxs rollback         undo the last change
+  ltxs versions         the versions of the system you can go back to
+  ltxs clean            free disk space (removes versions older than 2 weeks)
+EOF
+}
+
+# The [apps] section of system.conf.
+apps() { awk '/^\[/{s=tolower($0)} s=="[apps]" && !/^\[/' "$CONF" | sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true; }
+add_app() {
+    awk -v app="$1" '
+        { print }
+        tolower($0) == "[apps]" { found = 1; print app }
+        END { if (!found) { print ""; print "[apps]"; print app } }' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+}
+del_app() {
+    awk -v app="$1" '
+        /^\[/ { s = tolower($0) }
+        !(s == "[apps]" && $0 ~ "^[[:space:]]*" app "[[:space:]]*(#.*)?$") { print }' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+}
+is_app() { engine eval --raw "$pkgs.$1.name" >/dev/null 2>&1; }
+
+# Build and switch to what system.conf describes. The engine's messages go
+# to the log; on failure the useful lines are shown in plain words.
+apply() {
+    local mode=${1:-switch}
+    cp "$CONF" "$ENGINE/host/system.conf"
+    say "applying"
+    printf '\n=== %s ltxs %s\n' "$(date '+%F %T')" "$mode" >> "$LOG"
+    nixos-rebuild "$mode" --flake "$ENGINE#$HOST" >> "$LOG" 2>&1 &
+    local pid=$! spin='-\|/' i=0 n
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ -t 1 ]]; then
+            n=$(tail -n 400 "$LOG" | grep -c '^copying path\|^building')
+            printf '\r   %s  working%s ' "${spin:i++%4:1}" "${n:+ ($n)}"
+        fi
+        sleep 1
+    done
+    [[ -t 1 ]] && printf '\r%40s\r' ''
+    if ! wait "$pid"; then
+        tail -n 60 "$LOG" | grep -E 'error|system.conf' | sed -E 's|/nix/store/[a-z0-9]{32}-||g; s/^error: //' | tail -4 >&2
+        return 1
+    fi
+}
+
+cmd_install() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs install APP..."
+    need_root "$@"
+    local n added=()
+    cp "$CONF" "$CONF.before"
+    for n in "$@"; do
+        if apps | grep -qx "$n"; then say "$n is already installed"; continue; fi
+        is_app "$n" || { mv "$CONF.before" "$CONF"; fail "no app called '$n'. Try: ltxs search $n"; }
+        add_app "$n"; added+=("$n")
+    done
+    (( ${#added[@]} )) || { rm -f "$CONF.before"; return 0; }
+    say "installing ${added[*]}"
+    if apply switch; then
+        rm -f "$CONF.before"; say "${g}installed ${added[*]}${o}"
+    else
+        mv "$CONF.before" "$CONF"; fail "could not install ${added[*]}; nothing was changed"
+    fi
+}
+
+cmd_remove() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs remove APP..."
+    need_root "$@"
+    local n removed=()
+    cp "$CONF" "$CONF.before"
+    for n in "$@"; do
+        if apps | grep -qx "$n"; then del_app "$n"; removed+=("$n")
+        else say "$n is not installed"; fi
+    done
+    (( ${#removed[@]} )) || { rm -f "$CONF.before"; return 0; }
+    if apply switch; then rm -f "$CONF.before"; say "removed ${removed[*]}"
+    else mv "$CONF.before" "$CONF"; fail "could not remove ${removed[*]}; nothing was changed"; fi
+}
+
+cmd_list() {
+    local n
+    while read -r n; do printf '  %s\n' "$n"; done < <(apps)
+    [[ -n "$(apps)" ]] || echo "  no apps yet - try: ltxs search browser"
+}
+
+cmd_search() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs search WORD"
+    say "searching (the first search takes about a minute)"
+    engine search "$pkgs" "$@" --json 2>/dev/null |
+        jq -r 'to_entries[] | [(.key | split(".") | .[2:] | join(".")), .value.version, (.value.description // "")] | @tsv' |
+        sort | head -n 40 |
+        while IFS=$'\t' read -r n v desc; do
+            printf '  %s%-28s%s %s%-12s%s %s\n' "$a" "$n" "$o" "$d" "${v:0:12}" "$o" "${desc:0:70}"
+        done
+}
+
+cmd_info() {
+    [[ $# -eq 1 ]] || fail "usage: ltxs info APP"
+    is_app "$1" || fail "no app called '$1'"
+    printf '%s%s%s %s\n' "$a" "$1" "$o" "$(engine eval --raw "$pkgs.$1.version" 2>/dev/null)"
+    printf '  %s\n' "$(engine eval --raw "$pkgs.$1.meta.description" 2>/dev/null)"
+    printf '  homepage  %s\n' "$(engine eval --raw "$pkgs.$1.meta.homepage" 2>/dev/null)"
+    apps | grep -qx "$1" && printf '  %sinstalled%s\n' "$g" "$o"
+    return 0
+}
+
+cmd_try() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs try APP [ARGS...]"
+    local n=$1; shift
+    is_app "$n" || fail "no app called '$n'"
+    say "starting $n (nothing is installed)"
+    engine shell "$pkgs.$n" -c "${@:-$n}"
+}
+
+cmd_update() {
+    need_root "$@"
+    say "checking for updates"
+    engine flake update --flake "$ENGINE" >> "$LOG" 2>&1 || fail "could not reach the update server"
+    apply switch || fail "the update could not be applied; your system is unchanged"
+    say "${g}up to date.${o} Restart to use a new kernel if there was one."
+}
+
+cmd_apply() {
+    need_root "$@"
+    apply switch || fail "system.conf could not be applied; your system is unchanged"
+    say "${g}done${o}"
+}
+
+cmd_rollback() {
+    need_root "$@"
+    nixos-rebuild switch --rollback >> "$LOG" 2>&1 || fail "there is no earlier version"
+    say "back to the previous version"
+}
+
+cmd_versions() {
+    local cur; cur=$(readlink "$PROFILE")
+    for l in $(ls -1v "$(dirname "$PROFILE")" | grep -E '^system-[0-9]+-link$'); do
+        n=${l#system-}; n=${n%-link}
+        printf '  %s%-4s%s %s%s\n' "$a" "$n" "$o" "$(date -r "$(dirname "$PROFILE")/$l" '+%d %b %Y %H:%M')" \
+            "$([[ "$l" == "$cur" ]] && echo "   (now)")"
+    done
+}
+
+cmd_clean() {
+    need_root "$@"
+    nix-collect-garbage --delete-older-than 14d >> "$LOG" 2>&1
+    apply boot >/dev/null 2>&1
+    say "cleaned; $(df -h / | awk 'NR == 2 {print $4}') free"
+}
+
+CMD=${1:-help}; shift || true
+case "$CMD" in
+    install|add|in)    cmd_install "$@" ;;
+    remove|rm|del)     cmd_remove "$@" ;;
+    list|ls)           cmd_list ;;
+    search|find)       cmd_search "$@" ;;
+    info|show)         cmd_info "$@" ;;
+    try|run)           cmd_try "$@" ;;
+    update|up|upgrade) cmd_update "$@" ;;
+    apply)             cmd_apply "$@" ;;
+    rollback|undo)     cmd_rollback "$@" ;;
+    versions|history)  cmd_versions ;;
+    clean)             cmd_clean "$@" ;;
+    count)             engine path-info -r /run/current-system 2>/dev/null | wc -l ;;
+    *)                 usage ;;
+esac

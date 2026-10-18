@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# lunar-install - the guided way to install Lunar OS.
+#
+# Asks a few questions, then does the manual install for you: partitions the
+# disk, mounts it, writes system.conf (lunar-genconf), fills in your answers
+# and installs (lunarstrap). For the manual way, see: lunar-guide
+#
+# Test hook: LUNAR_INSTALL_ANSWERS=file with DISK= USERNAME= FULLNAME=
+# PASSWORD= HOSTNAME= TIMEZONE= KEYMAP= lines skips the questions.
+
+set -uo pipefail
+TARGET=/mnt
+LOG=${LUNAR_INSTALL_LOG:-/tmp/lunar-install.log}
+BACK="Lunar OS installer"
+
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec 3>&1
+: > "$LOG"
+log() { echo "-- $*" >> "$LOG"; }
+ask() { dialog --backtitle "$BACK" --title "Lunar OS" "$@" 2>&1 1>&3; }
+say() { printf '\e[38;2;150;160;255m::\e[0m %s\n' "$*"; log "$*"; }
+die() {
+    echo "!! $*" >> "$LOG"
+    [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]] ||
+        dialog --backtitle "$BACK" --title "Installation stopped" --msgbox "$*\n\nDetails: $LOG" 12 66
+    echo "Installation stopped: $*" >&2
+    umount -R "$TARGET" 2>/dev/null
+    exit 1
+}
+part() { case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac; }
+# set KEY in [SECTION] of system.conf to VALUE
+setconf() {
+    local file=$1 section=$2 key=$3 value=$4
+    awk -v s="[$section]" -v k="$key" -v v="$value" '
+        /^\[/ { in_s = ($0 == s) }
+        in_s && $0 ~ "^[[:space:]]*" k "[[:space:]]*=" { sub(/=.*/, "= " v); done = 1 }
+        { print }
+        END { if (!done) exit 3 }' "$file" > "$file.new" && mv "$file.new" "$file"
+}
+
+LIVE_DISK=/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /iso 2>/dev/null || findmnt -no SOURCE /)" 2>/dev/null | head -1)
+
+# ---- the questions -------------------------------------------------------------
+if [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
+    # shellcheck disable=SC1090
+    . "$LUNAR_INSTALL_ANSWERS"
+else
+    choice=$(ask --menu "\nHow do you want to install Lunar OS?" 13 64 2 \
+        guided "Answer a few questions (recommended)" \
+        manual "Do it yourself, step by step") || exit 0
+    if [[ "$choice" == manual ]]; then clear; exec lunar-guide; fi
+
+    ask --yes-label "Start" --no-label "Cancel" --yesno \
+"\nThe disk you choose next is erased completely.\nConnect to the internet first (the Wi-Fi icon at the top right)." 10 64 || exit 0
+
+    disks=()
+    while read -r name size model; do
+        [[ "$name" == "$LIVE_DISK" ]] && continue
+        disks+=("$name" "$size  ${model:-disk}")
+    done < <(lsblk -dpno NAME,SIZE,MODEL -e 1,7,11 2>/dev/null | awk '$1 !~ /zram/')
+    (( ${#disks[@]} )) || die "No disk found to install on (other than this USB stick)."
+    DISK=$(ask --menu "Install on which disk? Everything on it is erased." 15 66 6 "${disks[@]}") || exit 0
+    ask --defaultno --yes-label "Erase and install" --no-label "Back" --yesno \
+        "\nErase everything on\n\n    $DISK  ($(lsblk -dno SIZE,MODEL "$DISK" | xargs))\n\nand install Lunar OS?" 12 62 || exit 0
+
+    FULLNAME=$(ask --inputbox "Your name" 8 50 "") || exit 0
+    while :; do
+        USERNAME=$(ask --inputbox "Username (lowercase, no spaces)" 8 50 \
+            "$(echo "${FULLNAME%% *}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')") || exit 0
+        [[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ && "$USERNAME" != root ]] && break
+        ask --msgbox "Use lowercase letters and digits, starting with a letter." 7 52
+    done
+    while :; do
+        PASSWORD=$(ask --insecure --passwordbox "Password" 8 50) || exit 0
+        again=$(ask --insecure --passwordbox "Password again" 8 50) || exit 0
+        [[ -n "$PASSWORD" && "$PASSWORD" == "$again" ]] && break
+        ask --msgbox "The passwords don't match (or are empty). Try again." 7 52
+    done
+    HOSTNAME=$(ask --inputbox "Name of this computer" 8 50 "lunar") || exit 0
+
+    zones=()
+    for z in Europe/Vienna Europe/Berlin Europe/Zurich Europe/Rome Europe/London Europe/Paris \
+             Europe/Madrid America/New_York America/Chicago America/Los_Angeles \
+             America/Sao_Paulo Asia/Tokyo Asia/Shanghai Asia/Kolkata Australia/Sydney UTC; do
+        zones+=("$z" "")
+    done
+    zones+=("other" "type it in")
+    TIMEZONE=$(ask --menu "Time zone" 20 50 12 "${zones[@]}") || exit 0
+    if [[ "$TIMEZONE" == other ]]; then
+        TIMEZONE=$(ask --inputbox "Time zone (for example Europe/Vienna)" 8 50 "UTC") || exit 0
+    fi
+
+    KEYMAP=$(ask --menu "Keyboard layout" 18 50 10 \
+        us "English (US)" gb "English (UK)" de "German" at "Austrian" ch "Swiss" \
+        it "Italian" fr "French" es "Spanish" pt "Portuguese" br "Portuguese (Brazil)" \
+        se "Swedish" no "Norwegian" dk "Danish" pl "Polish") || exit 0
+fi
+
+for v in DISK USERNAME PASSWORD HOSTNAME TIMEZONE KEYMAP; do
+    [[ -n "${!v:-}" ]] || die "Missing answer: $v"
+done
+FULLNAME=${FULLNAME:-$USERNAME}
+FULLNAME=${FULLNAME//#/}
+[[ "$HOSTNAME" =~ ^[A-Za-z0-9-]{1,63}$ ]] || HOSTNAME=lunar
+[[ "$TIMEZONE" =~ ^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$ ]] || TIMEZONE=UTC
+[[ -b "$DISK" ]] || die "$DISK is not a disk."
+[[ "$DISK" != "$LIVE_DISK" ]] || die "That is the USB stick Lunar OS is running from."
+log "disk $DISK user $USERNAME host $HOSTNAME tz $TIMEZONE keymap $KEYMAP"
+clear
+
+# ---- the manual install, done for you -------------------------------------------
+say "Partitioning $DISK"
+umount -R "$TARGET" 2>/dev/null
+for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2); do umount "$p" 2>/dev/null; swapoff "$p" 2>/dev/null; done
+wipefs -af "$DISK" >> "$LOG" 2>&1
+sgdisk --zap-all "$DISK" >> "$LOG" 2>&1
+# 1: BIOS boot (for computers without UEFI), 2: boot files, 3: the system.
+sgdisk -n1:0:+1M -t1:ef02 -c1:bios \
+       -n2:0:+1G -t2:ef00 -c2:LUNAR-EFI \
+       -n3:0:0   -t3:8304 -c3:lunar-root "$DISK" >> "$LOG" 2>&1 || die "Could not partition $DISK."
+udevadm settle 2>/dev/null; partx -u "$DISK" 2>/dev/null; udevadm settle 2>/dev/null
+EFI=$(part "$DISK" 2); ROOT=$(part "$DISK" 3)
+for _ in $(seq 20); do [[ -b "$ROOT" ]] && break; sleep 0.5; done
+
+say "Formatting"
+mkfs.fat -F 32 -n LUNAR-EFI "$EFI" >> "$LOG" 2>&1 || die "Could not format $EFI."
+mkfs.ext4 -F -q -L lunar-root "$ROOT" >> "$LOG" 2>&1 || die "Could not format $ROOT."
+
+say "Mounting"
+mount "$ROOT" "$TARGET" || die "Could not mount $ROOT."
+mkdir -p "$TARGET/boot"
+mount -o umask=0077 "$EFI" "$TARGET/boot" || die "Could not mount $EFI."
+
+say "Writing system.conf"
+lunar-genconf "$TARGET" --force >> "$LOG" 2>&1 || die "lunar-genconf failed."
+CONF=$TARGET/etc/lunar/system.conf
+setconf "$CONF" system hostname "$HOSTNAME"
+setconf "$CONF" system timezone "$TIMEZONE"
+setconf "$CONF" system keyboard "$KEYMAP"
+setconf "$CONF" user name "$USERNAME"
+setconf "$CONF" user fullname "$FULLNAME"
+cat "$CONF" >> "$LOG"
+
+LUNARSTRAP_PASSWORD=$PASSWORD LUNARSTRAP_LOG=$LOG.strap lunarstrap "$TARGET" || die "lunarstrap failed (details: $LOG.strap)"
+
+sync
+umount -R "$TARGET"
+log "done"
+if [[ -z "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
+    if ask --yes-label "Restart now" --no-label "Later" --yesno \
+        "\nLunar OS is installed.\n\nRemove the USB stick when the screen goes dark,\nthen sign in as $USERNAME." 11 56; then
+        systemctl reboot
+    fi
+fi
+exit 0
