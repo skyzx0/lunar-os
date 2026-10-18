@@ -21,14 +21,14 @@ in
     appendToMenuLabel = " Live";
     makeEfiBootable = true;
     makeUsbBootable = true;
-    splashImage = ../assets/splash.png;
-    efiSplashImage = ../assets/splash.png;
+    splashImage = ../assets/boot-menu.png;
+    efiSplashImage = ../assets/boot-menu.png;
     grubTheme = null;
     # The installed system and the package set it is built from come on the
     # stick, so installing copies them instead of downloading them.
     storeContents = [ installed nixpkgs.outPath flakeSource ];
   };
-  boot.loader.timeout = lib.mkForce 3;
+  boot.loader.timeout = lib.mkForce 2;
   # No ZFS on the stick: it's large and Lunar doesn't install onto it.
   boot.supportedFilesystems.zfs = lib.mkForce false;
 
