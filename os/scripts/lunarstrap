@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# lunarstrap - install Lunar OS onto the mounted new root.
+#
+#   lunarstrap /mnt
+#
+# Builds the system described in /mnt/etc/lunar/system.conf (written by
+# lunar-genconf), installs the boot loader, and asks for your password.
+# Most of it comes from the USB stick; the rest is downloaded.
+
+set -uo pipefail
+ROOT=${1:-}
+LOG=${LUNARSTRAP_LOG:-/tmp/lunarstrap.log}
+a=$'\e[38;2;150;160;255m'; r=$'\e[31m'; o=$'\e[0m'
+say() { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+die() { printf '%slunarstrap:%s %s\n' "$r" "$o" "$*" >&2; exit 1; }
+[[ -n "$ROOT" ]] || { printf '%b' 'Usage: lunarstrap /mnt\n\nInstalls Lunar OS as described in /mnt/etc/lunar/system.conf (from lunar-genconf),\nthen asks for your password.\n'; exit 1; }
+[[ $EUID -eq 0 ]] || die "run it as root (sudo lunarstrap $ROOT)"
+CONF=$ROOT/etc/lunar/system.conf
+ENGINE=$ROOT/var/lib/lunar/engine
+[[ -f "$CONF" ]] || die "no $CONF - run lunar-genconf $ROOT first"
+[[ -d "$ENGINE" ]] || die "no Lunar engine in $ROOT - run lunar-genconf $ROOT first"
+mountpoint -q "$ROOT" || die "nothing is mounted at $ROOT"
+
+user=$(awk -F= '/^\[/{s=$0} s=="[user]" && $1 ~ /^ *name *$/ {gsub(/ /,"",$2); print $2}' "$CONF")
+user=${user:-lunar}
+cp "$CONF" "$ENGINE/host/system.conf"
+
+say "installing Lunar OS (5-20 minutes; details in $LOG)"
+: > "$LOG"
+if [[ -n "${LUNARSTRAP_DRY_RUN:-}" ]]; then
+    echo "dry run" >> "$LOG"
+else
+    nixos-install --root "$ROOT" --flake "$ENGINE#lunar" --no-root-passwd --no-channel-copy \
+        >> "$LOG" 2>&1 &
+    pid=$!
+    spin='-\|/'; i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        n=$(grep -c '^copying path' "$LOG" 2>/dev/null)
+        printf '\r   %s  %s parts installed ' "${spin:i++%4:1}" "${n:-0}"
+        sleep 1
+    done
+    printf '\r%60s\r' ''
+    wait "$pid" || {
+        grep -E '^error|error:' "$LOG" | tail -5 | sed -E 's|/nix/store/[a-z0-9]{32}-||g' >&2
+        die "installation failed (full details: $LOG)"
+    }
+fi
+
+say "set the password for $user"
+if [[ -z "${LUNARSTRAP_DRY_RUN:-}" ]]; then
+    if [[ -n "${LUNARSTRAP_PASSWORD:-}" ]]; then
+        # From lunar-install, which already asked.
+        printf '%s:%s\n' "$user" "$LUNARSTRAP_PASSWORD" | nixos-enter --root "$ROOT" --silent -c chpasswd ||
+            die "could not set the password"
+    else
+        until nixos-enter --root "$ROOT" --silent -c "passwd $user" </dev/tty; do :; done
+    fi
+    # root has no password of its own: use sudo.
+    nixos-enter --root "$ROOT" -c "passwd -l root" >/dev/null 2>&1
+fi
+
+# Wi-Fi networks you joined here work after the restart too.
+if [[ -d /etc/NetworkManager/system-connections ]]; then
+    mkdir -p "$ROOT/etc/NetworkManager/system-connections"
+    cp -a /etc/NetworkManager/system-connections/. "$ROOT/etc/NetworkManager/system-connections/" 2>/dev/null
+fi
+
+say "Lunar OS is installed. Restart and sign in as $user (remove the USB stick when the screen goes dark)."

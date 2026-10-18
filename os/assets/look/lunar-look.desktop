@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar Look
+GenericName=Appearance
+Comment=Accent colour, transparency, blur, rounding, animations and wallpaper for every Lunar OS desktop
+Exec=lunar-look
+Icon=lunar
+Terminal=false
+Categories=Settings;DesktopSettings;GTK;
+Keywords=theme;colour;color;accent;transparency;blur;wallpaper;look;appearance;

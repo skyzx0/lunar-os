@@ -1,0 +1,9 @@
+{
+    "accent": "#969fff",
+    "terminal_opacity": 0.78,
+    "window_opacity": 0.92,
+    "blur": true,
+    "rounding": 14,
+    "animation_speed": "fast",
+    "wallpaper": "/etc/lunaros/wallpaper.png"
+}

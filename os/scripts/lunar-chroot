@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# lunar-chroot - work inside an installed Lunar OS from the USB stick.
+#
+#   lunar-chroot /mnt              a shell inside it
+#   lunar-chroot /mnt COMMAND...   run one command inside it
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+ROOT=${1:-/mnt}; shift || true
+[[ -e "$ROOT/etc/lunar/system.conf" ]] || { echo "lunar-chroot: no Lunar OS at $ROOT" >&2; exit 1; }
+if (( $# )); then
+    exec nixos-enter --root "$ROOT" --silent -c "$*"
+fi
+exec nixos-enter --root "$ROOT" --silent

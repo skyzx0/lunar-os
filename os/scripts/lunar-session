@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# lunar-session - starts the Lunar desktop.
+#
+# First sign-in: puts the Lunar desktop's settings into ~/.config (only the
+# files you don't have yet, so your own changes are never overwritten), then
+# applies Lunar Look and starts Hyprland.
+
+skel=/etc/lunaros/skel
+mark="$HOME/.config/lunaros/.skel-version"
+version=$(readlink -f "$skel")
+if [[ "$(cat "$mark" 2>/dev/null)" != "$version" ]]; then
+    mkdir -p "$HOME/.config/lunaros"
+    cp -rL --no-preserve=mode,ownership --update=none "$skel/." "$HOME/.config/"
+    echo "$version" > "$mark"
+fi
+lunar-look apply --no-reload >/dev/null 2>&1 || true
+exec Hyprland
