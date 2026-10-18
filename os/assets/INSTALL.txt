@@ -1,9 +1,9 @@
 LUNAR OS - INSTALLING BY HAND
 =============================
 
-The guided installer (sudo lunar-install) does all of this for you. This is the
+The guided installer (lunar-install) does all of this for you. This is the
 same install, step by step, for when you want to choose everything yourself.
-Become root first:  sudo -i
+On the USB stick you are already root.
 
 1. CONNECT TO THE INTERNET
    Wired works by itself. Wi-Fi:   nmtui
