@@ -13,7 +13,12 @@ if [[ "$(cat "$mark" 2>/dev/null)" != "$version" ]]; then
     cp -rL --no-preserve=mode,ownership --update=none "$skel/." "$HOME/.config/"
     echo "$version" > "$mark"
 fi
-lunar-look apply --no-reload >/dev/null 2>&1 || true
+# The wallpaper every part of the desktop points at.
+[[ -e "$HOME/.config/lunaros/wallpaper" ]] || ln -sfn /etc/lunaros/wallpaper.png "$HOME/.config/lunaros/wallpaper"
+# Your Lunar Look choices (the desktop also works without them: defaults ship
+# with it). Anything that goes wrong is kept in ~/.cache/lunar-session.log.
+mkdir -p "$HOME/.cache"
+lunar-look apply --no-reload > "$HOME/.cache/lunar-session.log" 2>&1 || true
 
 export XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland
 if command -v start-hyprland >/dev/null; then
