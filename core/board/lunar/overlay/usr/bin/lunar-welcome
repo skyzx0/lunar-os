@@ -1,0 +1,8 @@
+#!/bin/bash
+# The terminal that opens when the desktop starts.
+lunarfetch
+if [[ -e /etc/lunar-live ]]; then
+    printf '  \e[38;2;150;160;255mInstall Lunar OS on this computer:\e[0m  sudo lunar-install\n'
+    printf '  \e[2m(password: lunar)\e[0m\n\n'
+fi
+exec bash -l

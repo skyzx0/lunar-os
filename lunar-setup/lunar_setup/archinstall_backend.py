@@ -71,6 +71,7 @@ DESKTOP_COMMON = [
     "power-profiles-daemon", "upower",   # battery, power-saver mode
     "bluez", "bluez-utils",
     "python", "python-gobject", "gtk4", "libadwaita",   # Lunar Look
+    "grim", "imagemagick", "xorg-server-xephyr", "foot",  # lunar-test screenshots
 ]
 
 # Per desktop, on top of the above and archinstall's own selection.
@@ -501,6 +502,8 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("look/lunar-look-app", "/usr/local/lib/lunaros/lunar-look-app"),
             write_asset_cmd("look/look.json", "/etc/lunaros/look.json"),
             write_asset_cmd("look/lunar-look.desktop", "/usr/share/applications/lunar-look.desktop"),
+            write_asset_cmd("test/lunar-test", "/usr/local/bin/lunar-test", "755"),
+            write_asset_cmd("test/lunar-test.desktop", "/usr/share/applications/lunar-test.desktop"),
         ]
 
     # Hyprland: lunar-ii, which installs illogical-impulse (offered at first login).
@@ -763,6 +766,32 @@ def archinstall_available() -> bool:
     return shutil.which("archinstall") is not None
 
 
+def run_archinstall(cmd, emit):
+    """Run archinstall, streaming its output. Returns (status, download_failed)."""
+    yes_proc = subprocess.Popen(["yes"], stdout=subprocess.PIPE)
+    proc = subprocess.Popen(
+        cmd, stdin=yes_proc.stdout,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, env={**os.environ, "LC_ALL": "C.UTF-8"})
+    yes_proc.stdout.close()
+
+    last = ""
+    download_failed = False
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            if "failed retrieving file" in line or "failed to retrieve some files" in line:
+                download_failed = True
+            if line and line != last:
+                emit("   " + rebrand(line)[:110])
+                last = line
+    finally:
+        proc.stdout.close()
+        yes_proc.kill()
+        yes_proc.wait()
+    return proc.wait(), download_failed
+
+
 def install(cfg: Config, emit) -> None:
     """Install through archinstall, streaming its output to emit()."""
     if not archinstall_available():
@@ -775,10 +804,11 @@ def install(cfg: Config, emit) -> None:
     # the offline=True setting above disables. Before anything destructive:
     # finding out there is no network after the disk has been erased leaves a
     # machine that neither boots its old system nor has a new one.
-    from .install import require_network
+    from .install import require_network, ensure_mirrors
     emit("Checking the connection", accent=True)
     require_network(log=emit)
     emit("  mirrors reachable")
+    ensure_mirrors(log=emit)
 
     if "hyprland" in cfg.all_desktops():
         emit("Hyprland comes with illogical-impulse, installed and themed as Lunar.", accent=True)
@@ -844,26 +874,28 @@ def install(cfg: Config, emit) -> None:
     # Output streamed, stdin fed from `yes`: the same two properties that the
     # hand-written engine needed and got wrong for weeks. archinstall is
     # non-interactive with --silent, so this is a safety net, not a crutch.
-    yes_proc = subprocess.Popen(["yes"], stdout=subprocess.PIPE)
-    proc = subprocess.Popen(
-        cmd, stdin=yes_proc.stdout,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, env={**os.environ, "LC_ALL": "C.UTF-8"})
-    yes_proc.stdout.close()
-
-    last = ""
-    try:
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line and line != last:
-                emit("   " + rebrand(line)[:110])
-                last = line
-    finally:
-        proc.stdout.close()
-        yes_proc.kill()
-        yes_proc.wait()
-
-    rc = proc.wait()
+    # A package download can fail partway (a mirror drops out or lags behind):
+    # pacstrap then aborts before anything is installed. That is retried from
+    # the start with freshly ranked mirrors, up to three times in all. Any
+    # other failure is reported straight away.
+    for attempt in range(1, 4):
+        rc, download_failed = run_archinstall(cmd, emit)
+        if rc == 0 or not download_failed or attempt == 3:
+            break
+        emit("")
+        emit(f"A package download failed. Retrying with other mirrors ({attempt + 1} of 3).", accent=True)
+        subprocess.run(["umount", "-R", "/mnt"], capture_output=True)
+        subprocess.run(["swapoff", "-a"], capture_output=True)
+        # An encrypted install leaves its LUKS container open; archinstall
+        # cannot re-partition the disk until it is closed.
+        crypt = subprocess.run(["lsblk", "-nrpo", "NAME,TYPE", cfg.disk],
+                               capture_output=True, text=True).stdout
+        for row in crypt.splitlines():
+            name, _, kind = row.partition(" ")
+            if kind.strip() == "crypt":
+                subprocess.run(["cryptsetup", "close", name], capture_output=True)
+        ensure_mirrors(log=emit)
+        emit("")
 
     try:
         os.remove(creds_path)

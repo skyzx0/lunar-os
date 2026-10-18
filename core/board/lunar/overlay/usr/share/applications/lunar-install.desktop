@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install Lunar OS
+Comment=Install Lunar OS on this computer
+Exec=foot --app-id lunar-float sudo lunar-install
+Icon=system-software-install
+Categories=System;

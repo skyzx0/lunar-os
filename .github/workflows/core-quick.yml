@@ -1,0 +1,45 @@
+name: Quick build Lunar OS Core
+
+# A new Lunar OS Core image in about 5-10 minutes: the last full build's
+# programs and kernel, with the current Lunar files (rice, configs,
+# installer, ltxs and its recipes, scripts) put in. Nothing is compiled.
+# Changes to packages, the kernel or core/package need the full build.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  quick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Last full build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --json tagName -q \
+            '[.[] | select(.tagName | startswith("core-"))][0].tagName')
+          [ -n "$tag" ] || { echo "No Core release yet: run the full build (Build Lunar OS Core) once first."; exit 1; }
+          echo "starting from $tag"
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'lunar-core-*.img.gz' -D base
+          echo "LUNAR_VERSION=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          sudo apt-get install -y -qq pigz >/dev/null
+          sudo bash core/quick-rebuild.sh base/lunar-core-*.img.gz "$LUNAR_VERSION" "lunar-core-$LUNAR_VERSION.img.gz"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="lunar-core-$LUNAR_VERSION.img.gz"
+          sha256sum "$name" > SHA256SUMS
+          gh release create "core-$LUNAR_VERSION" "$name" SHA256SUMS -R "$GITHUB_REPOSITORY" \
+            --title "Lunar OS Core core-$LUNAR_VERSION" --prerelease \
+            --notes "Quick build: Lunar files updated on the last full build. Write to a USB stick (whole disk), boot in UEFI mode; user lunar, password lunar. Install with: sudo lunar-install"

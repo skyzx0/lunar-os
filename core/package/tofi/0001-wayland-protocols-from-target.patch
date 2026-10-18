@@ -1,0 +1,20 @@
+From: Lunar OS
+Subject: Find wayland-protocols in the target sysroot
+
+Buildroot installs wayland-protocols for the target only; the XML files
+are architecture-independent, so the target copy serves the build.
+
+
+diff --git a/meson.build b/meson.build
+index 71f256d..11023af 100644
+--- a/meson.build
++++ b/meson.build
+@@ -139,7 +139,7 @@ harfbuzz = dependency('harfbuzz')
+ cairo = dependency('cairo')
+ pangocairo = dependency('pangocairo')
+ wayland_client = dependency('wayland-client')
+-wayland_protocols = dependency('wayland-protocols', native: true)
++wayland_protocols = dependency('wayland-protocols')
+ wayland_scanner_dep = dependency('wayland-scanner', native: true)
+ xkbcommon = dependency('xkbcommon')
+ glib = dependency('glib-2.0')

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Wi-Fi
+Comment=Connect to a wireless network
+Exec=foot --app-id lunar-float lunar-wifi
+Icon=network-wireless
+Categories=Settings;Network;

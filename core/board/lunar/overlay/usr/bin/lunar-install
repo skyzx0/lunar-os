@@ -1,0 +1,239 @@
+#!/bin/bash
+# lunar-install - install Lunar OS from this USB stick onto the computer's disk.
+#
+# Asks for the disk, your name and password, the computer's name, time zone
+# and keyboard; then erases that disk, copies this system onto it, makes it
+# bootable and sets it up for you. About 5 minutes.
+#
+#   sudo lunar-install
+#
+# Test hooks (not for normal use): LUNAR_INSTALL_ANSWERS=file with
+# DISK= USERNAME= FULLNAME= PASSWORD= HOSTNAME= TIMEZONE= KEYMAP= lines skips
+# the questions; LUNAR_INSTALL_SOURCE=dir copies that instead of /, and
+# LUNAR_INSTALL_EFI_DIR=dir takes the boot files from there.
+
+set -uo pipefail
+TITLE="Lunar OS"
+TARGET=/mnt/lunar-target
+LOG=${LUNAR_INSTALL_LOG:-/var/log/lunar-install.log}
+BACK="Lunar OS installer"
+
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec 3>&1
+: > "$LOG"
+log() { echo "-- $*" >> "$LOG"; }
+die() {
+    echo "!! $*" >> "$LOG"
+    dialog --backtitle "$BACK" --title "Installation stopped" --msgbox "$*\n\nDetails: $LOG" 12 64
+    cleanup; exit 1
+}
+cleanup() {
+    umount -R "$TARGET" 2>/dev/null
+    umount /mnt/lunar-live-efi 2>/dev/null
+}
+ask() { dialog --backtitle "$BACK" --title "$TITLE" "$@" 2>&1 1>&3; }
+
+part() {   # disk, number -> partition device (sda1, nvme0n1p1, mmcblk0p1)
+    case "$1" in *[0-9]) echo "${1}p$2" ;; *) echo "$1$2" ;; esac
+}
+
+# ---- where we are running from -----------------------------------------------
+LIVE_ROOT=$(findmnt -no SOURCE /)
+LIVE_DISK=/dev/$(lsblk -no PKNAME "$LIVE_ROOT" 2>/dev/null | head -1)
+LIVE_EFI=$(lsblk -lpno NAME,PARTLABEL,LABEL "$LIVE_DISK" 2>/dev/null | awk '$0 ~ /LUNAR-EFI|boot/ {print $1; exit}')
+[[ -n "$LIVE_EFI" ]] || LIVE_EFI=$(part "$LIVE_DISK" 1)
+log "live root $LIVE_ROOT on $LIVE_DISK, boot files on $LIVE_EFI"
+
+# ---- the questions -------------------------------------------------------------
+if [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
+    # shellcheck disable=SC1090
+    . "$LUNAR_INSTALL_ANSWERS"
+else
+    ask --yes-label "Start" --no-label "Cancel" --yesno \
+"\nThis installs Lunar OS on this computer.\n\nThe disk you choose next is erased completely.\nKeep the USB stick plugged in until it says it's done." 12 60 || exit 0
+
+    disks=()
+    while read -r name size model; do
+        [[ "$name" == "$LIVE_DISK" ]] && continue
+        disks+=("$name" "$size  ${model:-disk}")
+    done < <(lsblk -dpno NAME,SIZE,MODEL -e 1,7,11 2>/dev/null | awk '$1 !~ /zram/')
+    (( ${#disks[@]} )) || die "No disk found to install on (other than this USB stick)."
+    DISK=$(ask --menu "Install on which disk? Everything on it is erased." 15 64 6 "${disks[@]}") || exit 0
+    ask --defaultno --yes-label "Erase and install" --no-label "Back" --yesno \
+        "\nErase everything on\n\n    $DISK  ($(lsblk -dno SIZE,MODEL "$DISK" | xargs))\n\nand install Lunar OS?" 12 60 || exit 0
+
+    FULLNAME=$(ask --inputbox "Your name" 8 50 "") || exit 0
+    while :; do
+        USERNAME=$(ask --inputbox "Username (lowercase, no spaces)" 8 50 \
+            "$(echo "${FULLNAME%% *}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')") || exit 0
+        [[ "$USERNAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ && "$USERNAME" != root ]] && break
+        ask --msgbox "Use lowercase letters and digits, starting with a letter." 7 50
+    done
+    while :; do
+        PASSWORD=$(ask --insecure --passwordbox "Password" 8 50) || exit 0
+        again=$(ask --insecure --passwordbox "Password again" 8 50) || exit 0
+        [[ -n "$PASSWORD" && "$PASSWORD" == "$again" ]] && break
+        ask --msgbox "The passwords don't match (or are empty). Try again." 7 50
+    done
+    HOSTNAME=$(ask --inputbox "Name of this computer" 8 50 "lunar") || exit 0
+    [[ "$HOSTNAME" =~ ^[A-Za-z0-9-]{1,63}$ ]] || HOSTNAME=lunar
+
+    zones=()
+    for z in Europe/Vienna Europe/Berlin Europe/Zurich Europe/Rome Europe/London Europe/Paris \
+             Europe/Madrid America/New_York America/Chicago America/Los_Angeles \
+             America/Sao_Paulo Asia/Tokyo Asia/Shanghai Asia/Kolkata Australia/Sydney UTC; do
+        zones+=("$z" "")
+    done
+    zones+=("other" "type it in")
+    TIMEZONE=$(ask --menu "Time zone" 20 50 12 "${zones[@]}") || exit 0
+    if [[ "$TIMEZONE" == other ]]; then
+        TIMEZONE=$(ask --inputbox "Time zone (for example Europe/Vienna)" 8 50 "UTC") || exit 0
+    fi
+    [[ -f "/usr/share/zoneinfo/$TIMEZONE" ]] || TIMEZONE=UTC
+
+    KEYMAP=$(ask --menu "Keyboard layout" 18 50 10 \
+        us "English (US)" gb "English (UK)" de "German" at "Austrian" ch "Swiss" \
+        it "Italian" fr "French" es "Spanish" pt "Portuguese" br "Portuguese (Brazil)" \
+        se "Swedish" no "Norwegian" dk "Danish" pl "Polish") || exit 0
+fi
+
+for v in DISK USERNAME PASSWORD HOSTNAME TIMEZONE KEYMAP; do
+    [[ -n "${!v:-}" ]] || die "Missing answer: $v"
+done
+FULLNAME=${FULLNAME:-$USERNAME}
+[[ -b "$DISK" ]] || die "$DISK is not a disk."
+[[ "$DISK" != "$LIVE_DISK" ]] || die "That is the USB stick Lunar OS is running from."
+log "disk $DISK user $USERNAME host $HOSTNAME tz $TIMEZONE keymap $KEYMAP"
+
+# ---- the work ----------------------------------------------------------------------
+step() { echo "XXX"; echo "$1"; echo "$2"; echo "XXX"; log "$2"; }
+EFI_PART=$(part "$DISK" 1)
+ROOT_PART=$(part "$DISK" 2)
+
+run_install() {
+    step 5 "Erasing $DISK"
+    umount -R "$TARGET" 2>/dev/null
+    for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2); do umount "$p" 2>/dev/null; swapoff "$p" 2>/dev/null; done
+    wipefs -af "$DISK" >> "$LOG" 2>&1
+    sgdisk --zap-all "$DISK" >> "$LOG" 2>&1
+    sgdisk -n1:0:+512M -t1:ef00 -c1:LUNAR-EFI -n2:0:0 -t2:8304 -c2:lunar-root "$DISK" >> "$LOG" 2>&1 || return 1
+    udevadm settle; sleep 1
+    partx -u "$DISK" >> "$LOG" 2>&1; udevadm settle
+
+    step 10 "Making the file systems"
+    mkfs.vfat -F 32 -n LUNAR-EFI "$EFI_PART" >> "$LOG" 2>&1 || return 1
+    mkfs.ext4 -F -q -L lunar-root "$ROOT_PART" >> "$LOG" 2>&1 || return 1
+    mkdir -p "$TARGET"
+    mount "$ROOT_PART" "$TARGET" || return 1
+    mkdir -p "$TARGET/boot/efi"
+    mount "$EFI_PART" "$TARGET/boot/efi" || return 1
+
+    step 15 "Copying Lunar OS (the longest part)"
+    rsync -aAXH --info=progress2 --no-inc-recursive \
+        --exclude={/dev/*,/proc/*,/sys/*,/run/*,/tmp/*,/mnt/*,/media/*,/lost+found,/boot/efi/*,/var/log/lunar-install.log} \
+        "${LUNAR_INSTALL_SOURCE:-/}/" "$TARGET/" 2>> "$LOG" |
+        tr '\r' '\n' | awk '/%/ { for (i = 1; i <= NF; i++) if ($i ~ /%$/) { sub(/%/, "", $i); p = 15 + int($i * 0.65); if (p != last) { print "XXX\n" p "\nCopying Lunar OS (the longest part)\nXXX"; fflush(); last = p } } }'
+    [[ -x "$TARGET/usr/bin/bash" || -x "$TARGET/bin/bash" ]] || return 1
+
+    step 82 "Setting up your account"
+    setup_target || return 1
+
+    step 90 "Making it bootable"
+    setup_boot || return 1
+
+    step 98 "Finishing"
+    sync
+    step 100 "Done"
+}
+
+setup_target() {
+    local t=$TARGET hash uuid_root uuid_efi
+    # The live user becomes yours: renamed, your password, your name.
+    hash=$(mkpasswd -m sha512 "$PASSWORD") || return 1
+    if [[ "$USERNAME" != lunar ]]; then
+        sed -i "s/^lunar:/$USERNAME:/" "$t/etc/passwd" "$t/etc/shadow" "$t/etc/group"
+        sed -i -E "s/([:,])lunar(,|\$)/\1$USERNAME\2/g" "$t/etc/group"
+        sed -i "s#:/home/lunar:#:/home/$USERNAME:#" "$t/etc/passwd"
+        mv "$t/home/lunar" "$t/home/$USERNAME"
+    fi
+    awk -F: -v OFS=: -v u="$USERNAME" -v h="$hash" '$1 == u { $2 = h } { print }' "$t/etc/shadow" > "$t/etc/shadow.new" &&
+        cat "$t/etc/shadow.new" > "$t/etc/shadow" && rm -f "$t/etc/shadow.new"
+    # root: locked; you use sudo.
+    awk -F: -v OFS=: '$1 == "root" { $2 = "!" } { print }' "$t/etc/shadow" > "$t/etc/shadow.new" &&
+        cat "$t/etc/shadow.new" > "$t/etc/shadow" && rm -f "$t/etc/shadow.new"
+    awk -F: -v OFS=: -v u="$USERNAME" -v n="$FULLNAME" '$1 == u { $5 = n } { print }' "$t/etc/passwd" > "$t/etc/passwd.new" &&
+        cat "$t/etc/passwd.new" > "$t/etc/passwd" && rm -f "$t/etc/passwd.new"
+
+    # A normal sign-in from now on, not the live stick's automatic one.
+    rm -rf "$t/etc/systemd/system/getty@tty1.service.d"
+    rm -f "$t/etc/lunar-live"
+
+    echo "$HOSTNAME" > "$t/etc/hostname"
+    ln -sf "/usr/share/zoneinfo/$TIMEZONE" "$t/etc/localtime"
+    echo "KEYMAP=$KEYMAP" > "$t/etc/vconsole.conf"
+    local f
+    for f in "$t/home/$USERNAME/.config/sway/config" "$t/etc/skel/.config/sway/config"; do
+        [[ -f "$f" ]] && sed -i "s/^\(\s*xkb_layout\) .*/\1 $KEYMAP/" "$f"
+    done
+    chown -R "$(awk -F: -v u="$USERNAME" '$1 == u {print $3 ":" $4}' "$t/etc/passwd")" "$t/home/$USERNAME"
+
+    uuid_root=$(blkid -s UUID -o value "$ROOT_PART")
+    uuid_efi=$(blkid -s UUID -o value "$EFI_PART")
+    cat > "$t/etc/fstab" <<EOF
+# Lunar OS
+UUID=$uuid_root  /          ext4  defaults,noatime  0 1
+UUID=$uuid_efi   /boot/efi  vfat  umask=0077        0 2
+EOF
+    rm -f "$t/var/lib/systemd/random-seed" "$t/etc/machine-id"
+    : > "$t/etc/machine-id"
+}
+
+setup_boot() {
+    local partuuid
+    local src=/mnt/lunar-live-efi
+    if [[ -n "${LUNAR_INSTALL_EFI_DIR:-}" ]]; then
+        src=$LUNAR_INSTALL_EFI_DIR
+    else
+        mkdir -p "$src"
+        mount -o ro "$LIVE_EFI" "$src" || return 1
+    fi
+    cp -r "$src/EFI" "$TARGET/boot/efi/" || return 1
+    cp "$src/bzImage" "$TARGET/boot/efi/" || return 1
+    [[ -n "${LUNAR_INSTALL_EFI_DIR:-}" ]] || umount "$src"
+
+    partuuid=$(blkid -s PARTUUID -o value "$ROOT_PART")
+    cat > "$TARGET/boot/efi/EFI/BOOT/grub.cfg" <<EOF
+set default="0"
+set timeout_style="hidden"
+set timeout="1"
+
+menuentry "Lunar OS" {
+    linux /bzImage root=PARTUUID=$partuuid rootwait rw quiet loglevel=3 console=tty1
+}
+menuentry "Lunar OS (safe graphics)" {
+    linux /bzImage root=PARTUUID=$partuuid rootwait rw nomodeset console=tty1
+}
+EOF
+    # A named entry in the firmware's boot menu. The disk also boots without
+    # it, through the standard fallback path EFI/BOOT/BOOTX64.EFI.
+    if [[ -d /sys/firmware/efi ]]; then
+        efibootmgr -q -c -d "$DISK" -p 1 -L "Lunar OS" -l '\EFI\BOOT\BOOTX64.EFI' >> "$LOG" 2>&1 ||
+            log "efibootmgr failed; the fallback boot path still works"
+    fi
+}
+
+if [[ -n "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
+    run_install > /dev/null || die "Installation failed."
+else
+    run_install | dialog --backtitle "$BACK" --title "Installing" --gauge "Starting" 9 64 0
+    [[ ${PIPESTATUS[0]} -eq 0 ]] || die "Installation failed."
+fi
+cleanup
+log "done"
+if [[ -z "${LUNAR_INSTALL_ANSWERS:-}" ]]; then
+    if ask --yes-label "Restart now" --no-label "Later" --yesno \
+        "\nLunar OS is installed.\n\nRemove the USB stick when the screen goes dark,\nthen sign in as $USERNAME." 11 56; then
+        systemctl reboot
+    fi
+fi
+exit 0

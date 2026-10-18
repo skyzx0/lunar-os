@@ -1,0 +1,12 @@
+config BR2_PACKAGE_TOFI
+	bool "tofi"
+	depends on BR2_PACKAGE_WAYLAND
+	select BR2_PACKAGE_WAYLAND_PROTOCOLS
+	select BR2_PACKAGE_LIBXKBCOMMON
+	select BR2_PACKAGE_CAIRO
+	select BR2_PACKAGE_PANGO
+	select BR2_PACKAGE_HARFBUZZ
+	select BR2_PACKAGE_FREETYPE
+	select BR2_PACKAGE_LIBGLIB2
+	help
+	  App launcher for Wayland.

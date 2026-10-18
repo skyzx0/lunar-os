@@ -84,3 +84,44 @@ with a sudo rule that exists only while it runs.
 If that part fails - no internet, a build error - the Lunar installation
 still completes with Lunar's own Hyprland setup, and the first login offers
 it again. Details: /var/log/lunaros-ii-install.log. `lunar-ii` reinstalls it.
+
+## Testing every desktop: `lunar-test`
+
+After installing, log in to Plasma or Hyprland, open a terminal and run `lunar-test`
+(or open "Lunar Test" from the app menu). It takes 1-3 minutes, never more than about 5:
+
+- checks the system (name, ltxs, hidden pacman, boot splash) and each installed
+  desktop's config with that desktop's own validator
+- starts Hyprland and Sway in a window and i3 in Xephyr, opens a terminal with
+  fastfetch in each, takes a screenshot and closes it again
+- writes `~/lunar-test/<date>/index.html` (pass/fail list plus screenshots) and opens it
+
+Plasma and GNOME can't run inside another desktop, so log in to each of them once and
+run `lunar-test` there too. `lunar-test --checks` skips the screenshots (seconds).
+
+## Lunar OS Core (independent)
+
+`core/` is Lunar OS built entirely from source, based on no other distribution:
+the compiler toolchain, glibc, the Linux kernel, systemd, Mesa, GTK, PipeWire and
+Sway are all compiled by the "Build Lunar OS Core" workflow, with Buildroot as the
+build tool. Lunar's own packages (swaylock, swayidle, mako, tofi, brightnessctl)
+are in `core/package/`.
+
+The workflow publishes `lunar-core-<version>.img.gz`: write it to a USB stick and
+it boots into the Lunar desktop (user `lunar`, password `lunar`).
+
+- `sudo lunar-install` installs it on the computer's disk (disk, account,
+  computer name, time zone, keyboard).
+- `ltxs` is the package manager: `ltxs list`, `sudo ltxs install firefox`,
+  `sudo ltxs upgrade` for apps, `sudo ltxs update` for the system itself
+  (from the newest release here; the repository must be public for that).
+- Desktop: Sway with the Lunar rice; Super+D apps, Super+Return terminal,
+  Super+E files, Super+B browser, Super+W Wi-Fi, Super+L lock.
+
+### Quick builds
+
+"Quick build Lunar OS Core" makes a new image in about 5-10 minutes without
+compiling: it takes the last full build and puts the current files from
+`core/board/lunar/overlay` into it (the rice, configs, installer, ltxs and its
+recipes). Use the full build only when the package list, the kernel or
+`core/package` changes.

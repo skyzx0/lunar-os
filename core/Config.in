@@ -1,0 +1,7 @@
+menu "Lunar OS"
+source "$BR2_EXTERNAL_LUNAR_PATH/package/swaylock/Config.in"
+source "$BR2_EXTERNAL_LUNAR_PATH/package/swayidle/Config.in"
+source "$BR2_EXTERNAL_LUNAR_PATH/package/mako/Config.in"
+source "$BR2_EXTERNAL_LUNAR_PATH/package/tofi/Config.in"
+source "$BR2_EXTERNAL_LUNAR_PATH/package/brightnessctl/Config.in"
+endmenu

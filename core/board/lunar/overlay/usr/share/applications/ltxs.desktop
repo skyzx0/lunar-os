@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar Apps
+Comment=Install apps with ltxs
+Exec=foot --app-id lunar-float bash -c 'ltxs list; echo; echo "Install with: sudo ltxs install NAME"; exec bash'
+Icon=system-software-install
+Categories=System;

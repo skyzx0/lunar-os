@@ -1,0 +1,4 @@
+#!/bin/bash
+# Super+B: Firefox if it's installed, otherwise offer to install it.
+if command -v firefox >/dev/null; then exec firefox "$@"; fi
+exec foot --app-id lunar-float bash -c 'echo "Firefox is not installed yet."; read -rp "Install it now with ltxs? [Y/n] " a; [[ "$a" =~ ^[Nn] ]] || sudo ltxs install firefox; read -rp "Enter to close " _'

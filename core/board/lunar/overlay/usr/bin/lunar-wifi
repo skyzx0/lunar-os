@@ -1,0 +1,10 @@
+#!/bin/bash
+# Connect to Wi-Fi: lists networks, asks which one and the password.
+dev=$(iwctl device list 2>/dev/null | awk '/station/{print $1; exit}')
+[ -n "$dev" ] || { echo "No Wi-Fi adapter found."; read -r; exit 1; }
+iwctl station "$dev" scan; sleep 3
+iwctl station "$dev" get-networks
+read -rp "Network name: " ssid
+[ -n "$ssid" ] && iwctl station "$dev" connect "$ssid"
+iwctl station "$dev" show | grep -E 'State|Connected network'
+read -rp "Enter to close " _

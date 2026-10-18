@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# lunar-test - check every desktop on this Lunar OS install and see how each looks.
+#
+#   lunar-test            run everything (a few minutes), then open the report
+#   lunar-test --checks   only the checks, no screenshots (seconds)
+#
+# Run it from a desktop session (Plasma or Hyprland is best). For each
+# installed desktop it checks the configs with that desktop's own validator,
+# then - where it can - starts the desktop in a window inside this one, opens
+# a terminal with fastfetch, takes a screenshot and closes it again:
+#
+#   Hyprland, Sway   nested in a window (needs a Wayland session)
+#   i3               nested in Xephyr
+#   the one you are in   screenshot of this screen
+#   Plasma, GNOME    only when you run it from inside them (they can't nest)
+#
+# Nothing is changed. The report - screenshots plus every pass/fail - is
+# written to ~/lunar-test/<date>/index.html and opened when it finishes.
+
+set -uo pipefail
+
+ONLY_CHECKS=0
+[[ "${1:-}" == "--checks" ]] && ONLY_CHECKS=1
+OUT="$HOME/lunar-test/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$OUT"
+W=1600; H=900
+PER_DESKTOP=40          # seconds before a nested desktop is given up on
+
+accent=$'\033[38;2;150;160;255m'; red=$'\033[31m'; green=$'\033[32m'; dim=$'\033[2m'; off=$'\033[0m'
+RESULTS=()              # "status|desktop|check|detail"
+pass() { RESULTS+=("pass|$1|$2|${3:-}"); printf '  %sok%s    %-9s %s\n' "$green" "$off" "$1" "$2"; }
+fail() { local x="${3:-}"; RESULTS+=("fail|$1|$2|$x"); printf '  %sFAIL%s  %-9s %s %s%s%s\n' "$red" "$off" "$1" "$2" "$dim" "${x:0:120}" "$off"; }
+skip() { RESULTS+=("skip|$1|$2|${3:-}"); printf '  %s--    %-9s %s %s%s\n' "$dim" "$1" "$2" "${3:-}" "$off"; }
+has()  { command -v "$1" >/dev/null 2>&1; }
+check() { # desktop, name, command...
+    local d="$1" n="$2"; shift 2
+    local out; out=$("$@" 2>&1); local rc=$?
+    if (( rc == 0 )); then pass "$d" "$n"; else fail "$d" "$n" "$(echo "$out" | grep -v '^$' | tail -3 | tr '\n' ' ')"; fi
+}
+
+installed() {
+    case "$1" in
+        plasma)   has plasmashell ;;
+        gnome)    has gnome-shell ;;
+        hyprland) has Hyprland || has hyprland ;;
+        sway)     has sway ;;
+        i3)       has i3 ;;
+    esac
+}
+CURRENT=$(echo "${XDG_CURRENT_DESKTOP:-}" | tr '[:upper:]' '[:lower:]')
+case "$CURRENT" in *kde*) CURRENT=plasma ;; *gnome*) CURRENT=gnome ;; *hyprland*) CURRENT=hyprland ;;
+                   *sway*) CURRENT=sway ;; *i3*) CURRENT=i3 ;; esac
+
+printf '\n  %sLunar OS%s test  %s-> %s%s\n\n' "$accent" "$off" "$dim" "$OUT" "$off"
+
+# --- the system ---------------------------------------------------------------
+printf '%s:: system%s\n' "$accent" "$off"
+grep -q '^NAME="Lunar OS"' /usr/lib/os-release && pass system "named Lunar OS" || fail system "named Lunar OS" "$(grep ^NAME= /usr/lib/os-release)"
+has ltxs && pass system "ltxs present" || fail system "ltxs present"
+bash -ic 'pacman >/dev/null 2>&1' </dev/null 2>/dev/null; [[ $? -eq 127 ]] && pass system "pacman command hidden" || fail system "pacman command hidden"
+[[ -f /usr/share/plymouth/themes/lunar/lunar.script ]] && pass system "boot splash installed" || fail system "boot splash installed"
+grep -qw splash /proc/cmdline && pass system "boot splash enabled" || skip system "boot splash enabled" "(no splash on kernel command line)"
+grep -rqs "splash-arch" /etc/mkinitcpio.d/ && fail system "no Arch logo at boot" "preset still points at splash-arch.bmp" || pass system "no Arch logo at boot"
+has fastfetch && check system "fastfetch" fastfetch --pipe true
+has lunar-look && check system "Lunar Look applies" lunar-look apply --no-reload
+
+# --- each desktop's configuration -------------------------------------------
+DESKTOPS=()
+for d in plasma gnome hyprland sway i3; do installed "$d" && DESKTOPS+=("$d"); done
+printf '\n%s:: configs%s  %s(installed: %s)%s\n' "$accent" "$off" "$dim" "${DESKTOPS[*]}" "$off"
+C="$HOME/.config"
+for d in "${DESKTOPS[@]}"; do
+    case "$d" in
+        hyprland)
+            HB=$(command -v Hyprland || command -v hyprland)
+            check hyprland "config (Hyprland --verify-config)" "$HB" --verify-config
+            if [[ -f "$C/hypr/hyprland.lua" ]]; then pass hyprland "illogical-impulse installed"
+            else fail hyprland "illogical-impulse installed" "see /var/log/lunaros-ii-install.log"; fi
+            has kitty && pass hyprland "terminal (kitty)" || fail hyprland "terminal (kitty)" ;;
+        sway)
+            check sway "config (sway -C)" sway -C -c "$C/sway/config"
+            has foot && check sway "terminal config (foot)" foot --check-config ;;
+        i3)
+            check i3 "config (i3 -C)" i3 -C -c "$C/i3/config"
+            [[ -f "$C/picom/picom.conf" ]] && pass i3 "compositor config present" || fail i3 "compositor config present" ;;
+        plasma)
+            grep -qs "widgetStyle=kvantum" "$C/kdeglobals" && pass plasma "Lunar Kvantum theme" || skip plasma "Lunar Kvantum theme" "(set at first Plasma login)"
+            grep -qs "opacityactive" "$C/kwinrulesrc" && fail plasma "no forced window opacity (flicker)" "old rule still in kwinrulesrc" || pass plasma "no forced window opacity (flicker)" ;;
+        gnome)
+            check gnome "Lunar defaults" grep -q "prefer-dark" /etc/dconf/db/local.d/00-lunar ;;
+    esac
+done
+
+# --- screenshots ----------------------------------------------------------------
+shot_here() {   # screenshot of the session this runs in
+    local f="$OUT/$CURRENT.png"
+    case "$CURRENT" in
+        plasma)   has spectacle && spectacle -b -n -f -o "$f" >/dev/null 2>&1 ;;
+        hyprland|sway) has grim && grim "$f" ;;
+        i3)       has import && import -window root "$f" ;;
+    esac
+    [[ -s "$f" ]]
+}
+
+wait_for() { local i; for ((i = 0; i < $1 * 2; i++)); do [[ -s "$2" ]] && return 0; sleep 0.5; done; return 1; }
+
+nested_sway() {
+    local cfg="$OUT/sway-test.conf" f="$OUT/sway.png"
+    cat > "$cfg" <<EOF
+include $C/sway/config
+output * resolution ${W}x${H}
+for_window [app_id="lunar-test"] floating enable, resize set 920 540, move position center
+exec foot --app-id lunar-test sh -c 'fastfetch; sleep 60'
+exec sh -c 'sleep 6; grim "$f"; sleep 1; swaymsg exit'
+EOF
+    WLR_BACKENDS=wayland timeout -s KILL $PER_DESKTOP sway -c "$cfg" >"$OUT/sway.log" 2>&1 &
+    wait_for $PER_DESKTOP "$f"
+}
+
+nested_hyprland() {
+    local f="$OUT/hyprland.png" rt="${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" before sig
+    HB=$(command -v Hyprland || command -v hyprland)
+    before=$(ls "$rt" 2>/dev/null)
+    timeout -s KILL $PER_DESKTOP "$HB" >"$OUT/hyprland.log" 2>&1 &
+    for _ in $(seq 1 30); do
+        sig=$(comm -13 <(echo "$before" | sort) <(ls "$rt" 2>/dev/null | sort) | head -1)
+        [[ -n "$sig" && -S "$rt/$sig/.socket.sock" ]] && break; sleep 0.5
+    done
+    [[ -n "${sig:-}" ]] || return 1
+    sleep 4    # let its bar and wallpaper come up
+    HYPRLAND_INSTANCE_SIGNATURE=$sig hyprctl dispatch exec "kitty sh -c 'fastfetch; sleep 60'" >/dev/null
+    sleep 4
+    HYPRLAND_INSTANCE_SIGNATURE=$sig hyprctl dispatch exec "grim $f" >/dev/null
+    wait_for 10 "$f"; local ok=$?
+    HYPRLAND_INSTANCE_SIGNATURE=$sig hyprctl dispatch exit >/dev/null 2>&1
+    return $ok
+}
+
+nested_i3() {
+    local f="$OUT/i3.png" n=$((RANDOM % 50 + 50))
+    Xephyr ":$n" -screen "${W}x${H}" -br -ac -noreset >"$OUT/xephyr.log" 2>&1 &
+    local xp=$!
+    sleep 2
+    local cfg="$OUT/i3-test.conf"
+    printf 'include %s\nfor_window [class="lunar-test"] floating enable, resize set 920 540, move position center\n' "$C/i3/config" > "$cfg"
+    DISPLAY=":$n" timeout -s KILL $PER_DESKTOP i3 -c "$cfg" >"$OUT/i3.log" 2>&1 &
+    sleep 4
+    DISPLAY=":$n" alacritty --class lunar-test -e sh -c 'fastfetch; sleep 60' >/dev/null 2>&1 &
+    sleep 4
+    DISPLAY=":$n" import -window root "$f" 2>/dev/null
+    DISPLAY=":$n" i3-msg exit >/dev/null 2>&1; kill $xp 2>/dev/null
+    [[ -s "$f" ]]
+}
+
+if (( ! ONLY_CHECKS )); then
+    printf '\n%s:: screenshots%s\n' "$accent" "$off"
+    if [[ -n "$CURRENT" ]]; then
+        shot_here && pass "$CURRENT" "screenshot (this session)" || fail "$CURRENT" "screenshot (this session)"
+    fi
+    for d in "${DESKTOPS[@]}"; do
+        [[ "$d" == "$CURRENT" ]] && continue
+        case "$d" in
+            sway)
+                if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then skip sway "screenshot" "(run from a Wayland session)"
+                else nested_sway && pass sway "screenshot (nested)" || fail sway "screenshot (nested)" "log: $OUT/sway.log"; fi ;;
+            hyprland)
+                if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then skip hyprland "screenshot" "(run from a Wayland session)"
+                else nested_hyprland && pass hyprland "screenshot (nested)" || fail hyprland "screenshot (nested)" "log: $OUT/hyprland.log"; fi ;;
+            i3)
+                if ! has Xephyr; then skip i3 "screenshot" "(Xephyr not installed)"
+                else nested_i3 && pass i3 "screenshot (nested)" || fail i3 "screenshot (nested)" "log: $OUT/i3.log"; fi ;;
+            plasma|gnome)
+                skip "$d" "screenshot" "(log in to $d and run lunar-test there)" ;;
+        esac
+    done
+fi
+
+# --- report -----------------------------------------------------------------
+fails=0; for r in "${RESULTS[@]}"; do [[ "$r" == fail* ]] && fails=$((fails + 1)); done
+{
+cat <<EOF
+<!doctype html><html><head><meta charset="utf-8"><title>Lunar OS test</title>
+<style>
+body{background:#050507;color:#e2e5f0;font:15px "Noto Sans",sans-serif;margin:32px auto;max-width:1200px;padding:0 16px}
+h1{font-weight:600}h1 span{color:#969fff} .sum{color:#8a8f9e;margin-bottom:24px}
+table{border-collapse:collapse;width:100%;margin-bottom:32px} td{padding:6px 10px;border-bottom:1px solid #16161c;vertical-align:top}
+.pass{color:#7fe0a0}.fail{color:#ff7a8a}.skip{color:#6b6f7d} .d{color:#969fff;width:90px} .x{color:#6b6f7d;font-size:13px}
+figure{margin:0 0 32px} img{width:100%;border-radius:12px;border:1px solid #1d1d25} figcaption{color:#969fff;margin:8px 0 0}
+</style></head><body>
+<h1><span>Lunar OS</span> test</h1>
+<div class="sum">$(date '+%d %b %Y %H:%M') &middot; ${#RESULTS[@]} checks &middot; $fails failed &middot; desktops: ${DESKTOPS[*]}</div>
+<table>
+EOF
+for r in "${RESULTS[@]}"; do
+    IFS='|' read -r s d n x <<<"$r"
+    x=${x//&/&amp;}; x=${x//</&lt;}
+    echo "<tr><td class=\"$s\">$s</td><td class=\"d\">$d</td><td>$n<div class=\"x\">$x</div></td></tr>"
+done
+echo "</table>"
+for d in plasma gnome hyprland sway i3; do
+    [[ -s "$OUT/$d.png" ]] && echo "<figure><img src=\"$d.png\"><figcaption>$d</figcaption></figure>"
+done
+echo "</body></html>"
+} > "$OUT/index.html"
+
+printf '\n  %s%d checks, %d failed.%s Report: %s\n\n' "$accent" "${#RESULTS[@]}" "$fails" "$off" "$OUT/index.html"
+has xdg-open && xdg-open "$OUT/index.html" >/dev/null 2>&1 &
+exit $(( fails > 0 ))

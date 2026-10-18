@@ -1,0 +1,23 @@
+#!/bin/bash
+# The Sway bar's right side: network, battery, clock. One line a second
+# (every 5 for the slower parts).
+net() {
+  local w
+  w=$(iwctl station list 2>/dev/null | awk '/connected/{print $1; exit}')
+  if [ -n "$w" ]; then
+    iwctl station "$w" show 2>/dev/null | awk -F'  +' '/Connected network/{print $3; exit}'
+  elif ip -4 route show default 2>/dev/null | grep -q .; then echo wired
+  else echo offline; fi
+}
+bat() {
+  local b; for b in /sys/class/power_supply/BAT*; do
+    [ -r "$b/capacity" ] || continue
+    printf '%s%%%s' "$(cat "$b/capacity")" "$([ "$(cat "$b/status")" = Charging ] && echo +)"; return
+  done
+}
+i=0; n=""; p=""
+while :; do
+  if (( i % 5 == 0 )); then n=$(net); p=$(bat); fi
+  printf '%s   %s%s%s\n' "$n" "${p:+$p   }" "$(date '+%a %d %b  %H:%M')" "  "
+  i=$((i + 1)); sleep 1
+done

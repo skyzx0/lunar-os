@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar Test
+Comment=Check every desktop and see how each one looks
+Exec=bash -c 'lunar-test; echo; read -rp "Enter to close " _'
+Terminal=true
+Icon=utilities-system-monitor
+Categories=System;

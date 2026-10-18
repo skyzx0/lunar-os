@@ -1,0 +1,5 @@
+config BR2_PACKAGE_BRIGHTNESSCTL
+	bool "brightnessctl"
+	depends on BR2_PACKAGE_SYSTEMD
+	help
+	  Read and control screen and keyboard backlight.

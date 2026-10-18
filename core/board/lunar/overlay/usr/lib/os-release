@@ -1,0 +1,9 @@
+NAME="Lunar OS"
+PRETTY_NAME="Lunar OS Core"
+ID=lunar
+VARIANT="Core"
+VARIANT_ID=core
+BUILD_ID=rolling
+ANSI_COLOR="38;2;150;160;255"
+HOME_URL="https://github.com/skyzx0/lunar-os"
+LOGO=lunar

@@ -1,0 +1,99 @@
+name: Build Lunar OS Core
+
+# Lunar OS Core: every package compiled from source here (toolchain, kernel,
+# systemd, Mesa, Sway) with Buildroot. The first build takes a few hours;
+# the compiler cache makes later ones much faster. If a build runs out of
+# time, run it again: it picks up from the cache.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILDROOT_VERSION: "2026.08"
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential bc cpio rsync unzip file wget \
+            libncurses-dev python3 git ccache
+
+      - name: Buildroot
+        run: git clone -q --depth 1 --branch "$BUILDROOT_VERSION" https://github.com/buildroot/buildroot.git buildroot
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: core-ccache-${{ github.run_id }}
+          restore-keys: core-ccache-
+
+      - name: Restore source downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: buildroot/dl
+          key: core-dl-${{ github.run_id }}
+          restore-keys: core-dl-
+
+      - name: Version
+        run: echo "LUNAR_VERSION=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: make -C buildroot BR2_EXTERNAL="$GITHUB_WORKSPACE/core" lunar_x86_64_defconfig
+
+      - name: Build
+        id: build
+        run: |
+          cd buildroot
+          # Stop in time to save the caches, so a re-run continues from them.
+          timeout 320m make 2>&1 | tee build.log | grep --line-buffered -E '^>>> |Error|error:' || true
+          test -f output/images/lunar-core.img.gz || { tail -n 80 build.log; exit 1; }
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: core-ccache-${{ github.run_id }}
+
+      - name: Save source downloads
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: buildroot/dl
+          key: core-dl-${{ github.run_id }}
+
+      - name: Build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-build-log
+          path: buildroot/build.log
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd buildroot/output/images
+          tag="core-$LUNAR_VERSION"
+          name="lunar-core-$LUNAR_VERSION.img.gz"
+          mv lunar-core.img.gz "$name"
+          sha256sum "$name" > SHA256SUMS
+          gh release create "$tag" "$name" SHA256SUMS -R "$GITHUB_REPOSITORY" \
+            --title "Lunar OS Core $tag" --prerelease \
+            --notes "Lunar OS, built from source. Write to a USB stick (whole disk) and boot in UEFI mode; user lunar, password lunar. Install with: sudo lunar-install"

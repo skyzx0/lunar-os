@@ -131,34 +131,52 @@ def require_network(log=None) -> None:
 
 
 def ensure_mirrors(log=None) -> None:
-    """Rank mirrors, and guarantee the list is not empty afterwards.
+    """Write a mirror list that works on a slow or flaky connection.
 
-    reflector needs the internet to rank mirrors. When it cannot reach the
-    mirror status service it exits without writing, leaving whatever was
-    there - which on a fresh medium is a file with every server commented out.
+    Arch's own geo-routed CDN goes first: it is always in sync and routes to a
+    nearby node. After it, mirrors ranked by the Arch mirror-status score -
+    only ones synced in the last 12 hours with every package, since a lagging
+    mirror answers 404 for files the database says exist. Ranking by score
+    downloads nothing here; ranking by measured speed (--sort rate) times out
+    on a slow Wi-Fi link and ranks nothing. Continent fallbacks go last, so
+    pacman always has somewhere else to try when one server fails a file.
+
+    pacman's own stall timeout is also switched off for the installer: on a
+    slow link it aborts a download that is merely slow, which pacstrap
+    reports as "failed retrieving file".
     """
     mirrorlist = "/etc/pacman.d/mirrorlist"
 
     log("Selecting mirrors", accent=True)
-    r = run(["reflector", "--protocol", "https", "--latest", "20",
-             "--sort", "rate", "--save", mirrorlist],
-            check=False, log=log)
-
-    active = []
+    ranked = []
     try:
-        with open(mirrorlist) as fh:
-            active = [l for l in fh if l.strip().startswith("Server")]
-    except OSError:
+        r = disk.run(["reflector", "--protocol", "https", "--age", "12",
+                      "--completion-percent", "100", "--sort", "score",
+                      "--latest", "15", "--connection-timeout", "10"],
+                     check=False, timeout=90)
+        if r.returncode == 0:
+            ranked = [l for l in r.stdout.splitlines() if l.strip().startswith("Server")]
+    except (OSError, disk.CommandFailed):
         pass
 
-    if r.returncode != 0 or not active:
-        log("  ranking unavailable, using the built-in mirror list")
-        with open(mirrorlist, "w") as fh:
-            fh.write("# Written by lunaros-setup: mirror ranking was unavailable.\n")
-            for m in FALLBACK_MIRRORS:
-                fh.write(f"Server = {m}\n")
-    else:
-        log(f"  {len(active)} mirrors ranked")
+    with open(mirrorlist, "w") as fh:
+        fh.write("# Written by lunaros-setup\n")
+        fh.write(f"Server = {FALLBACK_MIRRORS[0]}\n")
+        for line in ranked:
+            fh.write(line.strip() + "\n")
+        for m in FALLBACK_MIRRORS[1:]:
+            fh.write(f"Server = {m}\n")
+    log(f"  Arch CDN first, then {len(ranked)} ranked mirrors and {len(FALLBACK_MIRRORS) - 1} fallbacks")
+
+    try:
+        with open("/etc/pacman.conf") as fh:
+            conf = fh.read()
+        if "\nDisableDownloadTimeout" not in conf:
+            conf = conf.replace("[options]\n", "[options]\nDisableDownloadTimeout\n", 1)
+            with open("/etc/pacman.conf", "w") as fh:
+                fh.write(conf)
+    except OSError:
+        pass
 
 
 ON_MEDIUM_REPO = "/var/lib/lunar/repo"

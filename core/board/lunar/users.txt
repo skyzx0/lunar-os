@@ -1,0 +1,1 @@
+lunar -1 lunar -1 =lunar /home/lunar /bin/bash wheel,video,input,audio,seat Lunar

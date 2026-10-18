@@ -1,0 +1,190 @@
+#!/bin/bash
+# ltxs - the Lunar OS package manager.
+#
+#   ltxs list               apps you can install, and which are installed
+#   ltxs search WORD        find an app
+#   ltxs info APP           what an app is
+#   ltxs install APP...     install apps
+#   ltxs remove APP...      remove apps
+#   ltxs upgrade            update installed apps to their newest version
+#   ltxs update             update Lunar OS itself to the newest release
+#   ltxs version            which Lunar OS build this is
+#
+# Apps come from recipes in /usr/share/ltxs/recipes: each one says where the
+# app's official release is and how to install it into /opt. The system
+# itself is updated as a whole from Lunar OS releases, built from source.
+
+set -uo pipefail
+RECIPES=${LTXS_RECIPES:-/usr/share/ltxs/recipes}
+STATE=${LTXS_STATE:-/var/lib/ltxs}
+CONF=/etc/ltxs.conf
+RELEASES="https://github.com/skyzx0/lunar-os"
+[[ -r $CONF ]] && . "$CONF"
+
+a=$'\e[38;2;150;160;255m'; d=$'\e[2m'; r=$'\e[31m'; g=$'\e[32m'; o=$'\e[0m'
+[[ -t 1 ]] || { a=; d=; r=; g=; o=; }
+say()  { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+fail() { printf '%serror:%s %s\n' "$r" "$o" "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$CMD" "$@"; }
+
+recipe() {   # load a recipe into this shell
+    local f="$RECIPES/$1.sh"
+    [[ -f $f ]] || fail "no app called '$1'. Try: ltxs search $1"
+    unset NAME DESC HOMEPAGE LICENSE
+    unset -f install_app remove_app latest_version
+    # shellcheck disable=SC1090
+    . "$f"
+}
+installed_version() { cat "$STATE/installed/$1" 2>/dev/null; }
+
+download() {   # url, file
+    curl -fL --retry 5 --retry-all-errors -C - --progress-bar -o "$2" "$1" ||
+        fail "download failed: $1"
+}
+
+cmd_list() {
+    local f n v
+    for f in "$RECIPES"/*.sh; do
+        n=$(basename "$f" .sh); recipe "$n"
+        v=$(installed_version "$n")
+        printf '  %-16s %s%s%s %s\n' "$n" "$g" "${v:+[installed $v]}" "$o" "$d$DESC$o"
+    done
+}
+
+cmd_search() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs search WORD"
+    grep -lis -- "$1" "$RECIPES"/*.sh | while read -r f; do
+        n=$(basename "$f" .sh); recipe "$n"; printf '  %-16s %s\n' "$n" "$DESC"
+    done
+}
+
+cmd_info() {
+    [[ $# -eq 1 ]] || fail "usage: ltxs info APP"
+    recipe "$1"
+    printf '%s%s%s\n  %s\n  homepage  %s\n  license   %s\n  installed %s\n' \
+        "$a" "$NAME" "$o" "$DESC" "${HOMEPAGE:-}" "${LICENSE:-}" "$(installed_version "$1" || true)"
+}
+
+cmd_install() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs install APP..."
+    need_root "$@"
+    mkdir -p "$STATE/installed" /opt /usr/local/bin /usr/local/share/applications
+    local n v work
+    for n in "$@"; do
+        recipe "$n"
+        v=$(latest_version) || fail "could not reach $NAME's release server"
+        if [[ "$(installed_version "$n")" == "$v" && "${FORCE:-}" != 1 ]]; then
+            say "$NAME $v is already installed"; continue
+        fi
+        say "installing $NAME $v"
+        work=$(mktemp -d /var/tmp/ltxs.XXXXXX)
+        ( cd "$work" && install_app "$v" ) || { rm -rf "$work"; fail "$NAME did not install"; }
+        rm -rf "$work"
+        echo "$v" > "$STATE/installed/$n"
+        update-desktop-database -q /usr/local/share/applications 2>/dev/null || true
+        say "${g}$NAME $v installed${o}"
+    done
+}
+
+cmd_remove() {
+    [[ $# -ge 1 ]] || fail "usage: ltxs remove APP..."
+    need_root "$@"
+    local n
+    for n in "$@"; do
+        recipe "$n"
+        [[ -n "$(installed_version "$n")" ]] || { say "$NAME is not installed"; continue; }
+        remove_app
+        rm -f "$STATE/installed/$n"
+        say "$NAME removed"
+    done
+}
+
+cmd_upgrade() {
+    need_root "$@"
+    local f n any=0
+    for f in "$STATE"/installed/*; do
+        [[ -e $f ]] || continue
+        any=1; n=$(basename "$f")
+        cmd_install "$n"
+    done
+    (( any )) || say "no apps installed"
+}
+
+cmd_version() {
+    . /usr/lib/os-release
+    echo "$PRETTY_NAME, build ${IMAGE_VERSION:-$BUILD_ID}"
+}
+
+# ltxs update: the whole system from the newest Lunar OS release.
+# /usr (programs and libraries) is replaced as one piece; in /etc only new
+# files are added, so your settings stay; /home, /opt and /usr/local (apps
+# from ltxs) are not touched. The new kernel goes onto the boot partition.
+# Test hooks: LTXS_ROOT=dir updates that tree instead of /, and
+# LTXS_IMAGE=file.img.gz uses that image instead of downloading one.
+cmd_update() {
+    need_root "$@"
+    local R=${LTXS_ROOT:-} api tag cur url f line id
+    # shellcheck disable=SC1091
+    . "$R/usr/lib/os-release"
+    cur=${IMAGE_VERSION:-none}
+    if [[ -n "${LTXS_IMAGE:-}" ]]; then
+        tag="core-local"
+    else
+        api="${RELEASES/github.com/api.github.com/repos}/releases?per_page=30"
+        tag=$(curl -fsSL "$api" | jq -r '[.[] | select(.tag_name | startswith("core-"))][0].tag_name') ||
+            fail "could not reach the Lunar OS release server"
+        [[ -n "$tag" && "$tag" != null ]] || fail "no Lunar OS release found at $RELEASES"
+        if [[ "core-$cur" == "$tag" && "${FORCE:-}" != 1 ]]; then
+            say "Lunar OS is up to date ($cur)"; return
+        fi
+    fi
+    [[ -n "$R" ]] || mountpoint -q /boot/efi ||
+        fail "the boot partition is not mounted at /boot/efi (updates are for installed systems, not the USB stick)"
+    say "updating Lunar OS ${cur} -> ${tag#core-}"
+    WORK=$(mktemp -d /var/tmp/ltxs-update.XXXXXX)
+    trap 'umount "$WORK/root" "$WORK/efi" 2>/dev/null; [[ -n "${LOOP:-}" ]] && losetup -d "$LOOP"; rm -rf "$WORK"' EXIT
+    if [[ -n "${LTXS_IMAGE:-}" ]]; then
+        cp "$LTXS_IMAGE" "$WORK/img.gz"
+    else
+        url="$RELEASES/releases/download/$tag/lunar-core-${tag#core-}.img.gz"
+        say "downloading"
+        download "$url" "$WORK/img.gz"
+    fi
+    say "unpacking"
+    { gunzip -c "$WORK/img.gz" > "$WORK/img" && rm -f "$WORK/img.gz"; } || fail "the download is damaged"
+    LOOP=$(losetup -fP --show "$WORK/img") || fail "could not open the image"
+    partx -u "$LOOP" 2>/dev/null; udevadm settle 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -b "${LOOP}p2" ]] && break; sleep 0.5; done
+    mkdir -p "$WORK/root" "$WORK/efi"
+    mount -o ro "${LOOP}p2" "$WORK/root" || fail "could not open the new system"
+    say "installing the new system"
+    rsync -aAXH --delete --exclude=/local/ "$WORK/root/usr/" "$R/usr/" || fail "copying /usr failed"
+    rsync -aAXH --ignore-existing "$WORK/root/etc/" "$R/etc/"
+    # New system groups and users (for new services), keeping yours.
+    for f in group passwd; do
+        while IFS= read -r line; do
+            grep -q "^${line%%:*}:" "$R/etc/$f" && continue
+            id=$(cut -d: -f3 <<< "$line")
+            (( id < 1000 )) || continue      # the live image's own user is not yours
+            echo "$line" >> "$R/etc/$f"
+            [[ $f == passwd ]] && echo "${line%%:*}:!:1::::::" >> "$R/etc/shadow"
+        done < "$WORK/root/etc/$f"
+    done
+    { mount -o ro "${LOOP}p1" "$WORK/efi" && cp -f "$WORK/efi/bzImage" "$R/boot/efi/bzImage.new" &&
+        mv -f "$R/boot/efi/bzImage.new" "$R/boot/efi/bzImage"; } || fail "updating the kernel failed"
+    sync
+    say "${g}Lunar OS updated to ${tag#core-}.${o} Restart to use it: systemctl reboot"
+}
+
+CMD=${1:-help}; shift || true
+case "$CMD" in
+    list|ls)          cmd_list "$@" ;;
+    search|find)      cmd_search "$@" ;;
+    info|show)        cmd_info "$@" ;;
+    install|add|in)   cmd_install "$@" ;;
+    remove|rm|del)    cmd_remove "$@" ;;
+    upgrade)          cmd_upgrade "$@" ;;
+    update|up)        cmd_update "$@" ;;
+    version|-v)       cmd_version ;;
+    *)                sed -n '2,16s/^# \{0,1\}//p' "$0" ;;
+esac
