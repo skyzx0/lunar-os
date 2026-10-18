@@ -74,9 +74,9 @@ BR2_PACKAGE_UTIL_LINUX_BINARIES=y
 BR2_PACKAGE_IWD=y
 BR2_PACKAGE_ACPID=y
 
-# Graphics: Mesa (crocus for older Intel such as the T530, softpipe fallback)
+# Graphics: Mesa with software rendering. Mesa 26's Intel drivers (crocus,
+# iris) need LLVM, which is hours more to compile; Sway draws with pixman.
 BR2_PACKAGE_MESA3D=y
-BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_CROCUS=y
 BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_SOFTPIPE=y
 BR2_PACKAGE_MESA3D_GBM=y
 BR2_PACKAGE_MESA3D_OPENGL_EGL=y
