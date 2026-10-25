@@ -1,69 +1,259 @@
 #!/usr/bin/env bash
 # ltxs - the Lunar OS package command.
 #
-#   ltxs install <pkg>...   install packages
-#   ltxs remove <pkg>...    remove packages and what only they needed
-#   ltxs update             update the whole system
-#   ltxs search <term>      search available packages
-#   ltxs info <pkg>         details about a package
-#   ltxs list               packages you installed yourself
-#   ltxs files <pkg>        files a package installed
-#   ltxs owns <file>        which package a file belongs to
-#   ltxs clean              free space used by old downloads
+#   ltxs install <pkg>...    install packages
+#   ltxs remove <pkg>...     remove packages and what only they needed
+#   ltxs update              update everything, safely (see below)
+#   ltxs rollback            undo the last install, removal or update
+#   ltxs snapshots           the restore points ltxs can go back to
+#   ltxs search <term>       search available packages
+#   ltxs info <pkg>          details about a package
+#   ltxs list                packages you installed yourself
+#   ltxs files <pkg>         files a package installed
+#   ltxs owns <file>         which package a file belongs to
+#   ltxs app <cmd> ...       desktop apps from Flathub (sandboxed)
+#   ltxs clean               free space used by old downloads
+#   ltxs doctor              check the system for problems
+#
+# An update: checks there is room, refreshes the signing keys first (the
+# usual cause of a failed update), shows notices that need reading before
+# updating, takes a restore point, updates everything at once (never part of
+# the system), then the Flathub apps, then says what needs a restart.
 #
 # pacman does the work underneath. Its own options still work through ltxs
 # (ltxs -Syu, ltxs -Qi foo), so nothing that knows pacman is lost.
 set -uo pipefail
 
 PM="${LTXS_PACMAN:-/usr/bin/pacman}"
+STATE=/var/lib/lunaros
+NEWS_URL="https://archlinux.org/feeds/news/"
 ARGS=("$@")
-accent=$'\033[38;2;150;160;255m'; dim=$'\033[2m'; off=$'\033[0m'
+a=$'\033[38;2;150;160;255m'; d=$'\033[2m'; r=$'\033[31m'; g=$'\033[32m'; y=$'\033[33m'; o=$'\033[0m'
+[[ -t 1 ]] || { a=; d=; r=; g=; y=; o=; }
+say()  { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+warn() { printf '%s::%s %s\n' "$y" "$o" "$*" >&2; }
+fail() { printf '%serror:%s %s\n' "$r" "$o" "$*" >&2; exit 1; }
 
 usage() {
     cat <<USAGE
-${accent}ltxs${off} ${dim}- Lunar OS packages${off}
+${a}ltxs${o} ${d}- Lunar OS packages${o}
 
   ltxs install <package>...   install
   ltxs remove <package>...    remove, with what only it needed
-  ltxs update                 update the whole system
+  ltxs update                 update everything, with a restore point first
+  ltxs rollback               undo the last install, removal or update
+  ltxs snapshots              restore points
   ltxs search <term>          search available packages
   ltxs info <package>         details about a package
   ltxs list                   packages you installed
   ltxs files <package>        files a package installed
   ltxs owns <file>            which package owns a file
-  ltxs clean                  remove old downloaded packages
+  ltxs app search|install|remove|list|update   desktop apps from Flathub
+  ltxs clean                  remove old downloads (keeps the last 3 versions)
+  ltxs doctor                 check for problems
 USAGE
 }
 
 # Commands that change the system re-run themselves through sudo, so
 # "ltxs install foo" works without typing sudo first.
-as_root() {
-    if (( EUID != 0 )); then
-        exec sudo "$0" "${ARGS[@]}"
+as_root() { (( EUID == 0 )) || exec sudo "$0" "${ARGS[@]}"; }
+need() { (( $1 > 0 )) || { echo "ltxs $2: name at least one $3" >&2; exit 2; }; }
+have() { command -v "$1" >/dev/null 2>&1; }
+snapper_ok() { have snapper && [[ -f /etc/snapper/configs/root ]]; }
+
+check_lock() {
+    if [[ -e /var/lib/pacman/db.lck ]]; then
+        if pgrep -x pacman >/dev/null; then
+            fail "another install or update is running; wait for it to finish"
+        fi
+        warn "removing a leftover lock from an install that was interrupted"
+        rm -f /var/lib/pacman/db.lck
     fi
 }
 
-need() {
-    if (( $1 == 0 )); then
-        echo "ltxs $2: name at least one $3" >&2
-        exit 2
+check_space() {
+    local free; free=$(df --output=avail -k / | tail -1)
+    (( free > 2 * 1024 * 1024 )) && return 0
+    warn "less than 2 GB free; removing old downloads first"
+    have paccache && paccache -rk1 >/dev/null 2>&1
+    "$PM" -Sc --noconfirm >/dev/null 2>&1
+    free=$(df --output=avail -k / | tail -1)
+    (( free > 1024 * 1024 )) || fail "less than 1 GB free on /; free some space before updating"
+}
+
+# Notices published since the last update that may need something done by
+# hand. Shown before updating, with the choice to stop. No network or no
+# curl: skipped silently, it never blocks an update.
+check_news() {
+    have curl || return 0
+    local last=0 feed
+    [[ -f $STATE/last-update ]] && last=$(<"$STATE/last-update")
+    feed=$(curl -fsL --max-time 8 "$NEWS_URL" 2>/dev/null) || return 0
+    local items
+    items=$(printf '%s' "$feed" | python3 -c '
+import sys, email.utils, xml.etree.ElementTree as ET
+last = float(sys.argv[1])
+try:
+    root = ET.fromstring(sys.stdin.read())
+except ET.ParseError:
+    sys.exit(0)
+for item in root.iter("item"):
+    when = email.utils.parsedate_to_datetime(item.findtext("pubDate", "")).timestamp()
+    if when > last:
+        print(item.findtext("title", "").strip() + "\t" + item.findtext("link", "").strip())
+' "$last" 2>/dev/null)
+    [[ -n "$items" ]] || return 0
+    echo
+    warn "notices since your last update - read these first:"
+    while IFS=$'\t' read -r title link; do
+        printf '   %s%s%s\n   %s%s%s\n' "$y" "$title" "$o" "$d" "$link" "$o"
+    done <<< "$items"
+    echo
+    if [[ -t 0 ]]; then
+        read -r -p "Continue with the update? [Y/n] " ans
+        [[ "${ans,,}" == n* ]] && { say "stopped; nothing was changed"; exit 0; }
     fi
+}
+
+after_update() {
+    mkdir -p "$STATE"; date +%s > "$STATE/last-update"
+    local pacnew=()
+    mapfile -t pacnew < <(find /etc -name '*.pacnew' 2>/dev/null | head -5)
+    if (( ${#pacnew[@]} )); then
+        warn "new default settings arrived next to files you have changed:"
+        printf '   %s\n' "${pacnew[@]}"
+        printf '   %scompare with: sudo DIFFPROG="diff -u" pacdiff%s\n' "$d" "$o"
+    fi
+    if [[ ! -d /usr/lib/modules/$(uname -r) ]]; then
+        say "${y}a new kernel was installed - restart to use it${o}"
+    elif [[ -n "$(find /usr/lib/libc.so.6 /usr/lib/systemd/systemd -newer /proc/1/cmdline 2>/dev/null)" ]]; then
+        say "core parts of the system were updated - restart when convenient"
+    fi
+}
+
+cmd_update() {
+    as_root
+    check_lock
+    check_space
+    check_news
+    say "refreshing signing keys"
+    "$PM" -Sy --needed --noconfirm archlinux-keyring >/dev/null 2>&1 ||
+        warn "could not refresh the keys; continuing"
+    say "updating the system"
+    # snap-pac takes the restore point before and after this transaction.
+    "$PM" -Su "$@" || fail "the update did not complete. Nothing is half-done: pacman applies all or nothing. Try again, or: ltxs doctor"
+    if have flatpak && [[ -n "$(flatpak remotes 2>/dev/null)" ]]; then
+        say "updating apps"
+        flatpak update -y --noninteractive >/dev/null 2>&1 || warn "some apps could not be updated"
+    fi
+    after_update
+    say "${g}up to date${o}"
+}
+
+# The kernel lives in two places: its modules inside the system (which a
+# restore point covers) and the boot partition (which it cannot). After
+# undoing changes, the boot files are rebuilt from whichever kernel the
+# system now has, so the two always match.
+rebuild_boot() {
+    local m base
+    for m in /usr/lib/modules/*/; do
+        [[ -f "$m/pkgbase" && -f "$m/vmlinuz" ]] || continue
+        base=$(<"$m/pkgbase")
+        install -Dm644 "$m/vmlinuz" "/boot/vmlinuz-$base"
+    done
+    mkinitcpio -P >/dev/null 2>&1 || warn "rebuilding the boot images reported a problem; the previous ones are still in place"
+}
+
+cmd_rollback() {
+    as_root
+    snapper_ok || fail "restore points need the btrfs file system (chosen at install)"
+    check_lock
+    local pre="" post="" desc="" p q t undone=" "
+    # The newest pre/post pair snap-pac made around a package transaction
+    # that has not been undone yet. Rolling back again goes one further back.
+    [[ -f $STATE/undone ]] && undone=" $(tr '\n' ' ' < "$STATE/undone") "
+    while IFS=$'\t' read -r p q t; do
+        [[ "$p" =~ ^[0-9]+$ && "$q" =~ ^[0-9]+$ ]] || continue
+        [[ "$undone" == *" $p "* ]] && continue
+        pre=$p; post=$q; desc=$t
+    done < <(snapper -c root --csvout --separator $'\t' list --type pre-post \
+        --columns number,post-number,description 2>/dev/null)
+    [[ -n "$pre" ]] || fail "there is nothing to undo"
+    say "undo: ${desc:-snapshot $pre..$post}"
+    if [[ -t 0 && "${1:-}" != "-y" ]]; then
+        read -r -p "Restore the system to how it was before that? [y/N] " ans
+        [[ "${ans,,}" == y* ]] || { say "nothing was changed"; exit 0; }
+    fi
+    snapper -c root create --description "ltxs rollback (before undoing $pre..$post)" --cleanup-algorithm number >/dev/null 2>&1
+    snapper -c root undochange "$pre..$post" >/dev/null || fail "the restore did not complete"
+    mkdir -p "$STATE"; echo "$pre" >> "$STATE/undone"
+    rebuild_boot
+    say "${g}restored.${o} Restart now: sudo reboot"
+}
+
+cmd_snapshots() {
+    snapper_ok || fail "restore points need the btrfs file system (chosen at install)"
+    snapper -c root list "$@"
+}
+
+cmd_app() {
+    have flatpak || fail "flatpak is not installed: ltxs install flatpak"
+    local sub="${1:-list}"; shift || true
+    case "$sub" in
+        search)  need $# "app search" term; flatpak search "$@" ;;
+        install) need $# "app install" app; flatpak install -y flathub "$@" ;;
+        remove)  need $# "app remove" app; flatpak uninstall -y --delete-data "$@" && flatpak uninstall -y --unused >/dev/null ;;
+        list)    flatpak list --app --columns=name,application,version ;;
+        update)  flatpak update -y ;;
+        run)     need $# "app run" app; exec flatpak run "$@" ;;
+        *)       echo "ltxs app: search | install | remove | list | update | run" >&2; exit 2 ;;
+    esac
+}
+
+cmd_doctor() {
+    local bad=0 x
+    ok()   { printf '  %sok%s    %s\n' "$g" "$o" "$*"; }
+    bad()  { printf '  %sfix%s   %s\n' "$r" "$o" "$*"; bad=1; }
+    note() { printf '  %s--%s    %s\n' "$d" "$o" "$*"; }
+    x=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | xargs)
+    [[ -z "$x" ]] && ok "all services running" || bad "failed services: $x  (journalctl -b -u NAME)"
+    x=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+    (( x < 90 )) && ok "disk ${x}% used" || bad "disk ${x}% used - ltxs clean"
+    [[ -e /var/lib/pacman/db.lck ]] && ! pgrep -x pacman >/dev/null &&
+        bad "a leftover package lock - the next ltxs update removes it" || ok "package database unlocked"
+    x=$(resolvectl status 2>/dev/null | grep -m1 -o 'DNSOverTLS=yes\|+DNSOverTLS')
+    [[ -n "$x" ]] && ok "DNS encrypted" || note "DNS encryption is not active (lunar-dns status)"
+    systemctl is-active -q nftables && ok "firewall on" || bad "firewall off - sudo systemctl enable --now nftables"
+    [[ -d /sys/kernel/security/apparmor ]] && ok "AppArmor on" || note "AppArmor off"
+    lsblk -no TYPE 2>/dev/null | grep -qx crypt && ok "disk encrypted" || note "the disk is not encrypted"
+    snapper_ok && ok "restore points: $(snapper -c root list 2>/dev/null | tail -n +3 | wc -l)" || note "no restore points (not btrfs)"
+    x=$(find /etc -name '*.pacnew' 2>/dev/null | wc -l)
+    (( x == 0 )) && ok "no settings waiting to be merged" || note "$x .pacnew file(s): sudo DIFFPROG='diff -u' pacdiff"
+    x=$("$PM" -Qdtq 2>/dev/null | wc -l)
+    (( x == 0 )) && ok "no unused packages" || note "$x unused package(s): ltxs remove \$(pacman -Qdtq)"
+    return $bad
 }
 
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-    install|add|i)    need $# "$cmd" package; as_root; exec "$PM" -S --needed "$@" ;;
-    remove|rm|r)      need $# "$cmd" package; as_root; exec "$PM" -Rns "$@" ;;
-    update|upgrade|u) as_root; exec "$PM" -Syu "$@" ;;
+    install|add|i)    need $# "$cmd" package; as_root; check_lock; exec "$PM" -S --needed "$@" ;;
+    remove|rm|r)      need $# "$cmd" package; as_root; check_lock; exec "$PM" -Rns "$@" ;;
+    update|upgrade|u) cmd_update "$@" ;;
+    rollback|undo)    cmd_rollback "$@" ;;
+    snapshots|snaps)  cmd_snapshots "$@" ;;
     search|s)         need $# "$cmd" "search term"; exec "$PM" -Ss "$@" ;;
     info)             need $# "$cmd" package
                       "$PM" -Si "$@" 2>/dev/null || exec "$PM" -Qi "$@" ;;
     list|ls)          exec "$PM" -Qe "$@" ;;
     files)            need $# "$cmd" package; exec "$PM" -Ql "$@" ;;
     owns)             need $# "$cmd" file; exec "$PM" -Qo "$@" ;;
-    clean)            as_root; exec "$PM" -Sc "$@" ;;
+    app|apps|flatpak) cmd_app "$@" ;;
+    clean)            as_root
+                      if have paccache; then paccache -rk3 && paccache -ruk0
+                      else "$PM" -Sc --noconfirm; fi ;;
+    doctor|check)     cmd_doctor ;;
     help|-h|--help)   usage ;;
     -*)               exec "$PM" "$cmd" "$@" ;;
     *)                echo "ltxs: unknown command '$cmd'" >&2; echo >&2; usage >&2; exit 2 ;;

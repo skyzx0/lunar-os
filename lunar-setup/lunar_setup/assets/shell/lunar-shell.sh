@@ -40,3 +40,8 @@ sudo() {
     done
     command sudo "$@"
 }
+
+# The Lunar prompt in bash too (zsh sets it up in ~/.zshrc).
+if [ -n "${BASH_VERSION:-}" ] && command -v starship >/dev/null 2>&1 && [ "${TERM:-dumb}" != dumb ] && [ "${TERM:-}" != linux ]; then
+    eval "$(starship init bash)"
+fi

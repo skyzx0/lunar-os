@@ -1,0 +1,6 @@
+/* Lunar Look's colours; Lunar Look (Super+I) rewrites this file. */
+@define-color accent #969fff;
+@define-color on_accent #0a0a14;
+@define-color glass rgba(10, 10, 16, 0.70);
+@define-color fg #e2e5f0;
+@define-color dim #7b7f8e;

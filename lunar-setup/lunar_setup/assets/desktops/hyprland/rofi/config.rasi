@@ -1,0 +1,13 @@
+/* Lunar OS launcher. */
+configuration {
+    modi: "drun,run,window";
+    show-icons: true;
+    icon-theme: "Papirus-Dark";
+    display-drun: "";
+    display-run: "run";
+    display-window: "windows";
+    drun-display-format: "{name}";
+    matching: "fuzzy";
+    sort: true;
+}
+@theme "~/.config/rofi/lunar.rasi"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# lunar-dns - Lunar OS encrypted DNS.
+#
+#   lunar-dns status    which DNS servers are in use, and whether encrypted
+#   lunar-dns portal    for a Wi-Fi login page (hotel, train, airport): use the
+#                       network's own DNS for 10 minutes, then encrypted again
+#   lunar-dns secure    encrypted again now
+#
+# Every lookup normally goes encrypted (DNS over TLS) to Quad9 or Cloudflare.
+# Login pages on public Wi-Fi need the network's own DNS until you are signed
+# in; portal allows exactly that, temporarily, and never survives a restart.
+set -uo pipefail
+DROPIN=/run/systemd/resolved.conf.d/zz-lunar-portal.conf
+a=$'\033[38;2;150;160;255m'; o=$'\033[0m'; [[ -t 1 ]] || { a=; o=; }
+say() { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+root() { (( EUID == 0 )) || exec sudo "$0" "$@"; }
+
+case "${1:-status}" in
+    status)
+        if [[ -f $DROPIN ]]; then say "login-page mode: the network's own DNS, not encrypted"
+        else say "encrypted (DNS over TLS)"; fi
+        resolvectl status 2>/dev/null | sed -n '/^Global/,/^$/p' | grep -E 'Protocols|DNS Servers|Current DNS' ;;
+    portal)
+        root "$@"
+        mkdir -p "$(dirname "$DROPIN")"
+        printf '[Resolve]\nDNS=\nDomains=\nDNSOverTLS=no\nDNSSEC=no\n' > "$DROPIN"
+        systemctl restart systemd-resolved
+        systemctl stop lunar-dns-secure.timer >/dev/null 2>&1 || true
+        systemd-run --quiet --on-active=10min --unit=lunar-dns-secure --collect \
+            /usr/local/bin/lunar-dns secure >/dev/null 2>&1 || true
+        say "the network's own DNS for 10 minutes - sign in to the Wi-Fi now"
+        say "(the login page opens with any web address, for example http://neverssl.com)" ;;
+    secure)
+        root "$@"
+        rm -f "$DROPIN"
+        systemctl restart systemd-resolved
+        systemctl stop lunar-dns-secure.timer >/dev/null 2>&1 || true
+        say "encrypted again" ;;
+    *)  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

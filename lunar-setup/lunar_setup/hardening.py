@@ -106,7 +106,7 @@ kernel.dmesg_restrict = 1
 kernel.printk = 3 3 3 3
 kernel.unprivileged_bpf_disabled = 1
 net.core.bpf_jit_harden = 2
-kernel.yama.ptrace_scope = {"3" if profile.lockdown == "confidentiality" else "2"}
+kernel.yama.ptrace_scope = {"3" if profile.lockdown == "confidentiality" else "2" if profile.key != "balanced" else "1"}
 kernel.kexec_load_disabled = 1
 kernel.sysrq = 4
 kernel.perf_event_paranoid = 3
@@ -135,14 +135,28 @@ net.ipv4.conf.all.log_martians = 1
 net.ipv4.icmp_echo_ignore_all = 1
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.all.accept_source_route = 0
-net.ipv6.conf.all.accept_ra = 0
+{"net.ipv6.conf.all.accept_ra = 0" if profile.key != "balanced" else "# IPv6 router adverts stay on: NetworkManager needs them on most networks."}
 net.ipv6.conf.all.use_tempaddr = 2
 net.ipv6.conf.default.use_tempaddr = 2
 """
 
 
-def blacklist() -> str:
-    """Attack surface that a laptop or workstation has no business exposing."""
+def blacklist(profile=None) -> str:
+    """Attack surface that a laptop or workstation has no business exposing.
+
+    Balanced blocks only what no laptop uses. The stricter profiles also
+    block Bluetooth, the webcam, Thunderbolt docks and network file systems.
+    """
+    if profile is not None and profile.key == "balanced":
+        mods = [
+            "dccp", "sctp", "rds", "tipc", "n-hdlc", "ax25", "netrom", "x25",
+            "rose", "decnet", "econet", "af_802154", "ipx", "appletalk", "psnap",
+            "p8023", "p8022", "can", "atm",
+            "cramfs", "freevxfs", "jffs2", "hfs", "gfs2",
+            "firewire-core", "firewire-ohci", "firewire-sbp2", "vivid",
+        ]
+        lines = "\n".join(f"install {m} /bin/false\nblacklist {m}" for m in mods)
+        return "# Managed by Lunar OS.\n" + lines + "\n"
     mods = [
         # obscure network protocols
         "dccp", "sctp", "rds", "tipc", "n-hdlc", "ax25", "netrom", "x25",
@@ -192,7 +206,10 @@ table inet lunar {{
                                      parameter-problem }} limit rate 4/second accept
         ip6 nexthdr icmpv6 icmpv6 type {{ destination-unreachable, packet-too-big,
                                          time-exceeded, parameter-problem,
-                                         nd-neighbor-solicit, nd-neighbor-advert }} accept
+                                         nd-router-advert, nd-neighbor-solicit,
+                                         nd-neighbor-advert }} accept
+        # DHCPv6 answers from the router; without them IPv6 never configures.
+        ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
 
         counter drop
     }}
@@ -214,12 +231,23 @@ include "/etc/nftables.d/*.nft"
 
 
 def resolved_conf(profile) -> str:
-    return """
+    """Every DNS lookup encrypted (DNS over TLS), never sent in the clear.
+
+    Two providers, IPv4 and IPv6, so one being down changes nothing.
+    Domains=~. sends every name to them instead of the network's own
+    unencrypted server. DNSSEC is validated where the answer is signed;
+    the stricter profiles also refuse unsigned answers, which some networks
+    break. On a Wi-Fi login page: lunar-dns portal.
+    """
+    dnssec = "allow-downgrade" if profile.key == "balanced" else "yes"
+    return f"""
+# Managed by Lunar OS. Temporary changes: lunar-dns
 [Resolve]
-DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net
-FallbackDNS=1.1.1.1#cloudflare-dns.com
+DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 2606:4700:4700::1111#cloudflare-dns.com
+FallbackDNS=
+Domains=~.
 DNSOverTLS=yes
-DNSSEC=yes
+DNSSEC={dnssec}
 MulticastDNS=no
 LLMNR=no
 Cache=yes
@@ -249,20 +277,31 @@ dictcheck = 1
 """
 
 
-def networkmanager_privacy(profile) -> str:
-    if not profile.mac_randomisation:
+def networkmanager_privacy(profile, spoof: bool = False) -> str:
+    """The real hardware address is never sent.
+
+    "stable" gives each network its own private address that stays the same
+    there (no new login page on every reconnect); "random" changes it on
+    every connection and also stops sending the computer's name.
+    """
+    if not (profile.mac_randomisation or spoof):
         return ""
-    return """
+    wifi = "random" if spoof or profile.key in ("paranoid", "onion") else "stable"
+    hostname = "" if wifi == "stable" else """ipv4.dhcp-send-hostname=false
+ipv6.dhcp-send-hostname=false
+"""
+    return f"""
+# Managed by Lunar OS.
 [device-mac-randomization]
 wifi.scan-rand-mac-address=yes
 
 [connection-mac-randomization]
 ethernet.cloned-mac-address=stable
-wifi.cloned-mac-address=random
+wifi.cloned-mac-address={wifi}
 
 [connection]
 ipv6.ip6-privacy=2
-"""
+{hostname}"""
 
 
 def coredump_conf() -> str:
@@ -412,6 +451,56 @@ fs-type = swap
 """
 
 
+def oomd_slice() -> str:
+    return "[Slice]\nManagedOOMSwap=kill\n"
+
+
+def oomd_user() -> str:
+    # The way Fedora ships it: a session whose memory pressure stays above
+    # half for a while loses its largest app, instead of the whole computer
+    # freezing until the kernel finally acts.
+    return "[Service]\nManagedOOMMemoryPressure=kill\nManagedOOMMemoryPressureLimit=50%\n"
+
+
+def safe_files(cfg) -> dict:
+    """The hardening as files: {path: (content, mode)}.
+
+    For installs through archinstall, which owns the boot loader and the
+    kernel command line. Unlike apply() this writes nothing that locates or
+    unlocks the disk, so it cannot make a system unbootable. Every file is a
+    drop-in or a file nothing else owns.
+    """
+    p = cfg.profile_obj()
+    files = {
+        "/etc/sysctl.d/99-lunar-hardening.conf": (sysctl(p), "644"),
+        "/etc/sysctl.d/99-lunar-memory.conf": (memory_tuning(p), "644"),
+        "/etc/systemd/zram-generator.conf": (zram_conf(), "644"),
+        "/etc/systemd/coredump.conf.d/lunar.conf": (coredump_conf(), "644"),
+        "/etc/systemd/journald.conf.d/lunar.conf": (journald_conf(), "644"),
+        "/etc/modprobe.d/lunar-blacklist.conf": (blacklist(p), "644"),
+        "/etc/nftables.conf": (nftables(p), "600"),
+        "/etc/systemd/resolved.conf.d/lunar.conf": (resolved_conf(p), "644"),
+        # NetworkManager hands its DNS servers to resolved, and every program
+        # asks resolved. /etc/resolv.conf becomes the link at boot: inside
+        # the installer's chroot it is the installer's own file, mounted over.
+        "/etc/NetworkManager/conf.d/10-lunar-dns.conf": ("[main]\ndns=systemd-resolved\n", "644"),
+        "/etc/tmpfiles.d/lunar-resolv.conf":
+            ("L+ /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf\n", "644"),
+        "/etc/security/faillock.conf": (pam_faillock(), "644"),
+        "/etc/systemd/system/-.slice.d/10-lunar-oomd.conf": (oomd_slice(), "644"),
+        "/etc/systemd/system/user@.service.d/10-lunar-oomd.conf": (oomd_user(), "644"),
+        # /dev/shm is writable by everyone; nothing needs to run code from it.
+        "/etc/tmpfiles.d/lunar-shm.conf": ("d /dev/shm 1777 root root -\n", "644"),
+    }
+    if nm := networkmanager_privacy(p, getattr(cfg, "spoof_network", False)):
+        files["/etc/NetworkManager/conf.d/99-lunar-privacy.conf"] = (nm, "644")
+    if p.auditd:
+        files["/etc/audit/rules.d/lunar.rules"] = (audit_rules(p), "600")
+    if p.key != "balanced":
+        files["/etc/security/pwquality.conf"] = (pwquality(), "644")
+    return files
+
+
 def apply(cfg, luks_part_uuid: str, log=None) -> None:
     p = cfg.profile_obj()
 
@@ -449,7 +538,7 @@ session    required   pam_unix.so
         # on, so that unit must stay masked or it will prompt on every boot.
         write("/etc/machine-id", "uninitialized\n", log=log)
         chroot("systemctl mask systemd-firstboot.service", check=False, log=log)
-    write("/etc/modprobe.d/lunar-blacklist.conf", blacklist(), log=log)
+    write("/etc/modprobe.d/lunar-blacklist.conf", blacklist(p), log=log)
     write("/etc/nftables.conf", nftables(p), mode=0o700, log=log)
     os.makedirs(f"{ROOT}/etc/nftables.d", exist_ok=True)
     write("/etc/systemd/resolved.conf.d/lunar.conf", resolved_conf(p), log=log)
@@ -457,7 +546,7 @@ session    required   pam_unix.so
     write("/etc/security/pwquality.conf", pwquality(), log=log)
     write("/etc/kernel/cmdline", kernel_cmdline(p, luks_part_uuid) + "\n", log=log)
 
-    if nm := networkmanager_privacy(p):
+    if nm := networkmanager_privacy(p, getattr(cfg, "spoof_network", False)):
         write("/etc/NetworkManager/conf.d/99-lunar-privacy.conf", nm, log=log)
 
     # umask 077 for every login shell and systemd user unit

@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import uuid
 
+from . import hardening
 from .locales import x11_for
 from .profiles import Config
 
@@ -83,9 +84,18 @@ DESKTOP_EXTRAS = {
                "spectacle", "gwenview", "okular", "kcalc", "filelight"],
     # The gnome group is already complete; power profiles come from above.
     "gnome": [],
+    # Lunar's own Hyprland: every piece from the official repositories, so
+    # an update never needs anything built from source.
     "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
                  "blueman", "pavucontrol", "brightnessctl", "swaybg", "btop", "cava",
-                 "git", "base-devel"],                  # lunar-ii builds illogical-impulse
+                 "rofi", "swaync", "cliphist", "wl-clipboard", "hyprpicker",
+                 "swappy", "slurp", "playerctl", "libnotify", "hyprpolkitagent",
+                 "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
+                 "nautilus", "file-roller", "loupe", "papers", "gnome-text-editor",
+                 "gnome-calculator", "mpv", "gnome-keyring", "seahorse",
+                 "papirus-icon-theme", "adw-gtk-theme", "ttf-jetbrains-mono-nerd",
+                 "inter-font", "qt6ct", "qt5-wayland", "qt6-wayland",
+                 "git", "base-devel"],              # lunar-ii builds illogical-impulse
     "sway": ["network-manager-applet", "blueman", "thunar", "wofi", "swayidle", "swaylock"],
     "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
            "brightnessctl", "thunar", "picom", "feh"],
@@ -137,10 +147,29 @@ def available_packages(pkgs: list, emit=None) -> list:
     return keep
 
 
+# Every install. Stability first: tools that keep the system healthy on
+# their own (mirror refresh, package cache trimming, firmware updates),
+# then encryption, then a comfortable shell.
+STABILITY = ["reflector", "pacman-contrib", "fwupd", "flatpak", "man-db",
+             "man-pages", "bash-completion", "rsync", "unzip", "7zip", "wget",
+             "git", "sof-firmware"]
+ENCRYPTION = ["cryptsetup", "gnupg", "age", "wireguard-tools", "gocryptfs",
+              "openssh"]
+ENCRYPTION_GUI = ["keepassxc", "veracrypt"]
+SHELL = ["zsh-completions", "zsh-autosuggestions", "zsh-syntax-highlighting",
+         "starship", "eza", "bat", "fzf", "zoxide", "ripgrep", "fd"]
+
+
 def extra_packages(cfg: Config) -> list:
     """Packages beyond what archinstall's profile brings in."""
-    pkgs = ["zsh", "vim", "networkmanager", "nftables", "plymouth",
+    pkgs = ["zsh", "vim", "nano", "networkmanager", "nftables", "plymouth",
             "zram-generator", "sudo", "fastfetch"]
+    pkgs += STABILITY + ENCRYPTION + SHELL
+    if cfg.filesystem == "btrfs":
+        # Restore points before and after every install, removal and update.
+        pkgs += ["btrfs-progs", "snapper", "snap-pac"]
+    if graphical(cfg):
+        pkgs += ENCRYPTION_GUI
     p = cfg.profile_obj()
     if p.apparmor:
         pkgs.append("apparmor")
@@ -331,7 +360,8 @@ def user_files_cmds(cfg: Config, files: list) -> list:
         home = f"/home/{cfg.username}"
         for _, rel in files:
             cmds.append(f"install -Dm644 /etc/skel/{rel} {home}/{rel}")
-        cmds.append(f"chown -R {cfg.username}: {home}/.config")
+        # The home folder was created moments ago and holds only these.
+        cmds.append(f"chown -R {cfg.username}: {home}")
     return cmds
 
 
@@ -347,10 +377,13 @@ DESKTOP_USER_FILES = {
         ("desktops/hyprland/btop/btop.conf", ".config/btop/btop.conf"),
         ("desktops/hyprland/btop/lunar.theme", ".config/btop/themes/lunar.theme"),
         ("desktops/hyprland/cava.conf", ".config/cava/config"),
-        ("desktops/hyprland/dunstrc", ".config/dunst/dunstrc"),
-        ("desktops/hyprland/wofi/config", ".config/wofi/config"),
+        ("desktops/hyprland/rofi/config.rasi", ".config/rofi/config.rasi"),
+        ("desktops/hyprland/rofi/lunar.rasi", ".config/rofi/lunar.rasi"),
+        ("desktops/hyprland/swaync/config.json", ".config/swaync/config.json"),
+        ("desktops/hyprland/swaync/style.css", ".config/swaync/style.css"),
         ("desktops/waybar/config-hyprland.json", ".config/waybar/hyprland.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
+        ("desktops/waybar/lunar-look.css", ".config/waybar/lunar-look.css"),
     ] + _GTK_DARK,
     "sway": [
         ("desktops/sway/config", ".config/sway/config"),
@@ -358,6 +391,7 @@ DESKTOP_USER_FILES = {
         ("desktops/hyprland/wofi/config", ".config/wofi/config"),
         ("desktops/waybar/config-sway.json", ".config/waybar/sway.json"),
         ("desktops/waybar/style.css", ".config/waybar/style.css"),
+        ("desktops/waybar/lunar-look.css", ".config/waybar/lunar-look.css"),
     ] + _GTK_DARK,
     "i3": [
         ("desktops/i3/config", ".config/i3/config"),
@@ -365,6 +399,12 @@ DESKTOP_USER_FILES = {
         ("desktops/i3/alacritty.toml", ".config/alacritty/alacritty.toml"),
     ] + _GTK_DARK,
 }
+
+# Every install, desktop or not: the shell and its prompt.
+SHELL_USER_FILES = [
+    ("shell/zshrc", ".zshrc"),
+    ("shell/starship.toml", ".config/starship.toml"),
+]
 
 
 def kernel_hardening(cfg: Config) -> list:
@@ -375,13 +415,16 @@ def kernel_hardening(cfg: Config) -> list:
     right for the layout it created.
     """
     p = cfg.profile_obj()
+    # Balanced: only what costs nothing and breaks nothing on any laptop.
+    # zswap off because zram already compresses memory; both at once waste it.
     params = [
-        "init_on_alloc=1", "init_on_free=1", "page_alloc.shuffle=1",
-        "slab_nomerge", "randomize_kstack_offset=on", "vsyscall=none",
-        "debugfs=off", "intel_iommu=on", "amd_iommu=on",
-        "efi=disable_early_pci_dma", "spectre_v2=on", "tsx=off",
+        "init_on_alloc=1", "page_alloc.shuffle=1", "randomize_kstack_offset=on",
+        "vsyscall=none", "debugfs=off", "zswap.enabled=0",
         "quiet", "splash", "systemd.firstboot=off",
     ]
+    if p.key != "balanced":
+        params += ["init_on_free=1", "slab_nomerge", "intel_iommu=on", "amd_iommu=on",
+                   "efi=disable_early_pci_dma", "spectre_v2=on", "tsx=off"]
     if p.apparmor:
         params += ["lsm=landlock,lockdown,yama,integrity,apparmor,bpf"]
     if p.lockdown:
@@ -420,10 +463,42 @@ def lunar_layer(cfg: Config) -> list:
     ]
 
 
-    # The hardening configuration itself - sysctl, the module blacklist, the
-    # firewall, PAM limits - ships as files in the lunar-hardening package,
-    # so installing that package is what applies it. Nothing here needs to
-    # write those files by hand.
+    # The hardening itself: sysctl, the module blacklist, the firewall,
+    # encrypted DNS, private Wi-Fi addresses, login limits, the out-of-memory
+    # guard. Written as drop-in files, none of which can touch how the disk
+    # is found or unlocked.
+    for path, (content, mode) in hardening.safe_files(cfg).items():
+        cmds.append(write_bytes_cmd(content.lstrip("\n").encode(), path, mode))
+    cmds += [
+        "mkdir -p /etc/nftables.d",
+        write_asset_cmd("net/lunar-dns", "/usr/local/bin/lunar-dns", "755"),
+        # Encrypted DNS, the out-of-memory guard, and the maintenance timers:
+        # TRIM for the SSD weekly, fresh download servers weekly, old
+        # downloads trimmed to the last three versions weekly.
+        "systemctl enable systemd-resolved.service systemd-oomd.service fstrim.timer || true",
+        write_asset_cmd("stability/reflector.conf", "/etc/xdg/reflector/reflector.conf"),
+        "systemctl enable reflector.timer || true",
+        "systemctl enable paccache.timer || true",
+        "systemctl enable fwupd-refresh.timer 2>/dev/null || true",
+        # Readable package output; and a first update that does not list
+        # every notice ever published.
+        "sed -i 's/^#Color/Color/; s/^#VerbosePkgLists/VerbosePkgLists/' /etc/pacman.conf",
+        "mkdir -p /var/lib/lunaros && date +%s > /var/lib/lunaros/last-update",
+    ]
+    if p.usbguard:
+        # Trust exactly what is plugged in now. USBGuard without a policy
+        # blocks every USB device, keyboards and mice included.
+        cmds.append("usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null && "
+                    "chmod 600 /etc/usbguard/rules.conf || true")
+    if graphical(cfg):
+        cmds += [
+            # Firefox: HTTPS only, tracker and fingerprinting protection,
+            # no telemetry, uBlock Origin. All changeable in its settings.
+            write_asset_cmd("firefox/policies.json", "/etc/firefox/policies/policies.json"),
+            # Desktop apps from Flathub, sandboxed: ltxs app install NAME
+            "flatpak remote-add --if-not-exists flathub "
+            "https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true",
+        ]
 
     # Kernel hardening parameters are *appended* to the command line
     # archinstall wrote, never substituted for it. archinstall puts the
@@ -437,8 +512,6 @@ def lunar_layer(cfg: Config) -> list:
         "sed -i \"s|$| $p|\" /etc/kernel/cmdline; "
         "done; fi")
 
-    if cfg.spoof_network:
-        cmds.append("systemctl enable lunar-spoof.service || true")
 
     # The X11 side of the keyboard layout. archinstall's own installer can
     # propagate this live via a temporary systemd-nspawn boot of the target,
@@ -506,11 +579,16 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("test/lunar-test.desktop", "/usr/share/applications/lunar-test.desktop"),
         ]
 
-    # Hyprland: lunar-ii, which installs illogical-impulse (offered at first login).
+    # Hyprland: the power menu, and lunar-ii, which installs the
+    # experimental illogical-impulse look on request.
     if "hyprland" in cfg.all_desktops():
         cmds += [
+            write_asset_cmd("desktops/hyprland/lunar-power", "/usr/local/bin/lunar-power", "755"),
             write_asset_cmd("ii/lunar-ii", "/usr/local/bin/lunar-ii", "755"),
             write_asset_cmd("ii/lunar-ii.desktop", "/usr/share/applications/lunar-ii.desktop"),
+            # Two notification services fight over the same name; swaync is
+            # Lunar's. archinstall's Hyprland selection brings dunst.
+            "pacman -Rns --noconfirm dunst >/dev/null 2>&1 || true",
         ]
 
     # GNOME: dark, the moon, a Lunar dock - as system defaults, so anything
@@ -523,10 +601,17 @@ def lunar_layer(cfg: Config) -> list:
         ]
 
     # Hyprland, Sway, i3: their whole look lives in the user's config files.
-    files = list(dict.fromkeys(f for d in cfg.all_desktops()
-                               for f in DESKTOP_USER_FILES.get(d, [])))
-    if files:
-        cmds += user_files_cmds(cfg, files)
+    files = list(dict.fromkeys(SHELL_USER_FILES + [f for d in cfg.all_desktops()
+                                                   for f in DESKTOP_USER_FILES.get(d, [])]))
+    cmds += user_files_cmds(cfg, files)
+    if cfg.username:
+        cmds.append(f"chsh -s /usr/bin/zsh {cfg.username} >/dev/null || true")
+    # The login screen starts on Hyprland when it is the main desktop.
+    if cfg.desktop == "hyprland" and greeter_for(cfg) == "sddm":
+        cmds.append(
+            "[ -d /var/lib/sddm ] && [ -f /usr/share/wayland-sessions/hyprland.desktop ] && "
+            f"printf '[Last]\\nSession=/usr/share/wayland-sessions/hyprland.desktop\\nUser={cfg.username}\\n' "
+            "> /var/lib/sddm/state.conf && chown sddm:sddm /var/lib/sddm/state.conf; true")
     if graphical(cfg) and cfg.username:
         # Generate the user's Lunar Look files now, as that user. Hyprland and
         # foot refuse a missing included file, so they get an empty one if the
@@ -566,7 +651,7 @@ def lunar_layer(cfg: Config) -> list:
     # as the user (its installer refuses root) and never fails the Lunar
     # installation: on any problem Lunar's own Hyprland setup stays and the
     # first login offers it again. Log: /var/log/lunaros-ii-install.log
-    if "hyprland" in cfg.all_desktops() and cfg.username:
+    if "hyprland" in cfg.all_desktops() and cfg.username and cfg.rice == "ii":
         cmds.append(f"/usr/local/bin/lunar-ii --install-time {cfg.username} || true")
 
     # Boot splash: the half moon, name and slogan on black while the system
@@ -612,6 +697,31 @@ def lunar_layer(cfg: Config) -> list:
         "mkinitcpio -P || echo 'lunaros-setup: rebuilding the boot images "
         "failed; the boot menu may still show the old name' >&2")
 
+    # Restore points (btrfs). archinstall's own snapper option would create
+    # /.snapshots as a nested subvolume, which collides with the @snapshots
+    # subvolume mounted there; so the configuration is written the way
+    # snapper's create-config would, minus that step (ArchWiki, Snapper).
+    # Last of all, so the first restore point is the finished install.
+    if cfg.filesystem == "btrfs":
+        conf = "/etc/snapper/configs/root"
+        sets = {"SUBVOLUME": "/", "FSTYPE": "btrfs", "ALLOW_GROUPS": "wheel",
+                "SYNC_ACL": "yes", "NUMBER_LIMIT": "10", "NUMBER_LIMIT_IMPORTANT": "5",
+                "TIMELINE_CREATE": "yes", "TIMELINE_LIMIT_HOURLY": "5",
+                "TIMELINE_LIMIT_DAILY": "7", "TIMELINE_LIMIT_WEEKLY": "2",
+                "TIMELINE_LIMIT_MONTHLY": "1", "TIMELINE_LIMIT_YEARLY": "0"}
+        sed = " ".join(f"-e 's|^{k}=.*|{k}=\"{v}\"|'" for k, v in sets.items())
+        cmds.append(
+            "if [ -f /usr/share/snapper/config-templates/default ] && mountpoint -q /.snapshots; then "
+            f"install -Dm640 /usr/share/snapper/config-templates/default {conf} && "
+            f"sed -i {sed} {conf} && "
+            "( grep -q '^SNAPPER_CONFIGS=' /etc/conf.d/snapper 2>/dev/null && "
+            "sed -i 's/^SNAPPER_CONFIGS=.*/SNAPPER_CONFIGS=\"root\"/' /etc/conf.d/snapper || "
+            "{ mkdir -p /etc/conf.d; echo 'SNAPPER_CONFIGS=\"root\"' >> /etc/conf.d/snapper; } ) && "
+            "chmod 750 /.snapshots && chown :wheel /.snapshots && "
+            "systemctl enable snapper-timeline.timer snapper-cleanup.timer snapper-boot.timer; "
+            "snapper --no-dbus -c root create -d 'Lunar OS as installed' -c number -u important=yes; "
+            "fi; true")
+
     return cmds
 
 
@@ -637,7 +747,11 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
     profile = {"main": main["main"], "details": list(dict.fromkeys(details)), "greeter": greeter_for(cfg)}
     p = cfg.profile_obj()
 
-    kernels = ["linux-hardened", "linux-lts"] if p.hardened_kernel else ["linux", "linux-lts"]
+    # The first kernel is the one the computer starts. Long-term support
+    # unless a hardened profile was chosen: it only gets fixes, never a new
+    # kernel series, so an update cannot bring a new driver regression. The
+    # second stays installed as a fallback in the boot menu (hold Space).
+    kernels = ["linux-hardened", "linux-lts"] if p.hardened_kernel else ["linux-lts", "linux"]
     if cfg.fast:
         kernels = kernels[:1]
 
@@ -810,7 +924,7 @@ def install(cfg: Config, emit) -> None:
     emit("  mirrors reachable")
     ensure_mirrors(log=emit)
 
-    if "hyprland" in cfg.all_desktops():
+    if "hyprland" in cfg.all_desktops() and cfg.rice == "ii":
         emit("Hyprland comes with illogical-impulse, installed and themed as Lunar.", accent=True)
         emit("  That part is built from source near the end: allow 15-30 extra minutes,")
         emit("  and keep the internet connected.")
