@@ -95,6 +95,7 @@ DESKTOP_EXTRAS = {
                  "gnome-calculator", "mpv", "gnome-keyring", "seahorse",
                  "papirus-icon-theme", "adw-gtk-theme", "ttf-jetbrains-mono-nerd",
                  "inter-font", "qt6ct", "qt5-wayland", "qt6-wayland",
+                 "hyprsunset", "libpulse",              # Lunar Control: night light, sound
                  "git", "base-devel"],              # lunar-ii builds illogical-impulse
     "sway": ["network-manager-applet", "blueman", "thunar", "wofi", "swayidle", "swaylock"],
     "i3": ["alacritty", "network-manager-applet", "blueman", "pavucontrol",
@@ -160,6 +161,17 @@ SHELL = ["zsh-completions", "zsh-autosuggestions", "zsh-syntax-highlighting",
          "starship", "eza", "bat", "fzf", "zoxide", "ripgrep", "fd"]
 
 
+# Developer tools: languages, build tools, debuggers, Git tooling, and
+# containers that need no root and no daemon (podman, also answering to
+# "docker"; distrobox for other distributions).
+DEV = ["base-devel", "git", "github-cli", "git-delta", "lazygit", "neovim", "tmux",
+       "direnv", "jq", "yq", "httpie", "python", "python-pip", "python-pipx", "uv",
+       "nodejs", "npm", "pnpm", "go", "rustup", "clang", "cmake", "ninja", "meson",
+       "gdb", "strace", "shellcheck", "sqlite", "just", "tokei", "hyperfine",
+       "podman", "podman-compose", "podman-docker", "distrobox"]
+DEV_GUI = ["code"]
+
+
 def extra_packages(cfg: Config) -> list:
     """Packages beyond what archinstall's profile brings in."""
     pkgs = ["zsh", "vim", "nano", "networkmanager", "nftables", "plymouth",
@@ -170,6 +182,8 @@ def extra_packages(cfg: Config) -> list:
         pkgs += ["btrfs-progs", "snapper", "snap-pac"]
     if graphical(cfg):
         pkgs += ENCRYPTION_GUI
+    if cfg.dev:
+        pkgs += DEV + (DEV_GUI if graphical(cfg) else [])
     p = cfg.profile_obj()
     if p.apparmor:
         pkgs.append("apparmor")
@@ -243,7 +257,8 @@ def disk_config(cfg: Config, size_bytes: int = None) -> dict:
         "dev_path": None,
         "flags": [],
         "fs_type": fs,
-        "mount_options": ["compress=zstd"] if fs == "btrfs" else [],
+        # noatime: reading a file never writes to the disk.
+        "mount_options": ["compress=zstd:1", "noatime"] if fs == "btrfs" else ["noatime"],
         "mountpoint": None if fs == "btrfs" else "/",
         "obj_id": root_id,
         "size": _size(root_mib),
@@ -484,7 +499,28 @@ def lunar_layer(cfg: Config) -> list:
         # every notice ever published.
         "sed -i 's/^#Color/Color/; s/^#VerbosePkgLists/VerbosePkgLists/' /etc/pacman.conf",
         "mkdir -p /var/lib/lunaros && date +%s > /var/lib/lunaros/last-update",
+        # Faster networking and room for file watchers.
+        write_asset_cmd("stability/performance.conf", "/etc/sysctl.d/90-lunar-performance.conf"),
+        # Boot does not wait for the network: the desktop is up while Wi-Fi
+        # connects, as on a phone.
+        "systemctl disable NetworkManager-wait-online.service >/dev/null 2>&1 || true",
     ]
+    if cfg.dev:
+        cmds += [
+            write_asset_cmd("dev/lunar-dev", "/usr/local/bin/lunar-dev", "755"),
+            write_asset_cmd("dev/gitconfig", "/etc/gitconfig"),
+            # delta as Git's pager only when it is there: a missing pager
+            # would break git log and git diff.
+            "command -v delta >/dev/null && cat >> /etc/gitconfig <<'EOF'\n"
+            + open(os.path.join(ASSETS, "dev/gitconfig-delta")).read() + "EOF\ntrue",
+            write_asset_cmd("dev/makepkg.conf", "/etc/makepkg.conf.d/lunar.conf"),
+            write_asset_cmd("dev/registries.conf", "/etc/containers/registries.conf.d/10-lunar.conf"),
+        ]
+        if cfg.username:
+            # Rootless containers need a range of user IDs of their own.
+            u = cfg.username
+            cmds.append(f"grep -q '^{u}:' /etc/subuid 2>/dev/null || "
+                        f"usermod --add-subuids 100000-165535 --add-subgids 100000-165535 {u} || true")
     if p.usbguard:
         # Trust exactly what is plugged in now. USBGuard without a policy
         # blocks every USB device, keyboards and mice included.
@@ -576,6 +612,10 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("look/look.json", "/etc/lunaros/look.json"),
             write_asset_cmd("look/lunar-look.desktop", "/usr/share/applications/lunar-look.desktop"),
             write_asset_cmd("test/lunar-test", "/usr/local/bin/lunar-test", "755"),
+            # Lunar Control: Wi-Fi, Bluetooth, sound, display, power, system.
+            write_asset_cmd("control/lunar-control", "/usr/local/bin/lunar-control", "755"),
+            write_asset_cmd("control/lunar-control.desktop",
+                            "/usr/share/applications/lunar-control.desktop"),
             write_asset_cmd("test/lunar-test.desktop", "/usr/share/applications/lunar-test.desktop"),
         ]
 

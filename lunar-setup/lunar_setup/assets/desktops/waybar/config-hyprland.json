@@ -6,10 +6,25 @@
     "margin-top": 8,
     "margin-left": 12,
     "margin-right": 12,
-    "modules-left": ["custom/moon", "hyprland/workspaces", "hyprland/window"],
-    "modules-center": ["clock"],
-    "modules-right": ["tray", "cpu", "memory", "pulseaudio", "network", "bluetooth", "battery", "custom/notifications", "custom/power"],
-
+    "modules-left": [
+        "custom/moon",
+        "hyprland/workspaces",
+        "hyprland/window"
+    ],
+    "modules-center": [
+        "clock"
+    ],
+    "modules-right": [
+        "tray",
+        "cpu",
+        "memory",
+        "pulseaudio",
+        "network",
+        "bluetooth",
+        "battery",
+        "custom/notifications",
+        "custom/power"
+    ],
     "custom/moon": {
         "format": "◗",
         "tooltip": false,
@@ -17,8 +32,14 @@
     },
     "hyprland/workspaces": {
         "format": "{icon}",
-        "format-icons": { "active": "●", "default": "○", "empty": "·" },
-        "persistent-workspaces": { "*": 5 },
+        "format-icons": {
+            "active": "●",
+            "default": "○",
+            "empty": "·"
+        },
+        "persistent-workspaces": {
+            "*": 5
+        },
         "on-scroll-up": "hyprctl dispatch workspace e-1",
         "on-scroll-down": "hyprctl dispatch workspace e+1"
     },
@@ -31,15 +52,28 @@
         "format": "{:%H:%M}",
         "format-alt": "{:%A %d %B  %H:%M}",
         "tooltip-format": "<tt>{calendar}</tt>",
-        "calendar": { "mode": "month", "format": { "today": "<span color='#969fff'><b>{}</b></span>" } }
+        "calendar": {
+            "mode": "month",
+            "format": {
+                "today": "<span color='#969fff'><b>{}</b></span>"
+            }
+        }
     },
-    "cpu": { "format": "cpu {usage}%", "interval": 5, "on-click": "kitty -e btop" },
-    "memory": { "format": "mem {percentage}%", "interval": 10, "on-click": "kitty -e btop" },
+    "cpu": {
+        "format": "cpu {usage}%",
+        "interval": 5,
+        "on-click": "kitty -e btop"
+    },
+    "memory": {
+        "format": "mem {percentage}%",
+        "interval": 10,
+        "on-click": "kitty -e btop"
+    },
     "pulseaudio": {
         "format": "vol {volume}%",
         "format-muted": "muted",
         "scroll-step": 5,
-        "on-click": "pavucontrol",
+        "on-click": "lunar-control sound",
         "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
     },
     "network": {
@@ -47,27 +81,38 @@
         "format-ethernet": "wired",
         "format-disconnected": "offline",
         "tooltip-format": "{ifname}  {ipaddr}  {signalStrength}%",
-        "on-click": "nm-connection-editor"
+        "on-click": "lunar-control wifi"
     },
     "bluetooth": {
         "format": "bt",
         "format-connected": "bt {num_connections}",
         "format-off": "",
         "format-disabled": "",
-        "on-click": "blueman-manager"
+        "on-click": "lunar-control bluetooth"
     },
     "battery": {
         "format": "bat {capacity}%",
         "format-charging": "chg {capacity}%",
         "format-plugged": "ac {capacity}%",
-        "states": { "warning": 25, "critical": 10 }
+        "states": {
+            "warning": 25,
+            "critical": 10
+        },
+        "on-click": "lunar-control power"
     },
-    "tray": { "spacing": 8 },
+    "tray": {
+        "spacing": 8
+    },
     "custom/notifications": {
         "exec": "swaync-client -swb",
         "return-type": "json",
         "format": "{icon}",
-        "format-icons": { "notification": "◉", "none": "○", "dnd-notification": "◎", "dnd-none": "◎" },
+        "format-icons": {
+            "notification": "◉",
+            "none": "○",
+            "dnd-notification": "◎",
+            "dnd-none": "◎"
+        },
         "on-click": "swaync-client -t -sw",
         "on-click-right": "swaync-client -d -sw",
         "escape": true,
@@ -76,6 +121,7 @@
     "custom/power": {
         "format": "⏻",
         "tooltip": false,
-        "on-click": "lunar-power"
+        "on-click": "lunar-power",
+        "on-click-right": "lunar-control power"
     }
 }

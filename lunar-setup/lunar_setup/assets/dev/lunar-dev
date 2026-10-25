@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# lunar-dev - get a new Lunar OS machine ready for development in one go.
+#
+#   lunar-dev setup     your Git name and email, an SSH key, GitHub sign-in,
+#                       the Rust toolchain - each skipped if already done
+#   lunar-dev status    what is installed and set up
+#
+# Containers: docker and podman both work, without root and without a
+# daemon (podman underneath). Other distributions in a container, sharing
+# your home folder: distrobox create -i ubuntu:24.04 && distrobox enter
+set -uo pipefail
+a=$'\033[38;2;150;160;255m'; d=$'\033[2m'; g=$'\033[32m'; o=$'\033[0m'
+say() { printf '%s::%s %s\n' "$a" "$o" "$*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+setup() {
+    if [[ -z "$(git config --global user.name)" ]]; then
+        read -r -p "Your name for Git commits: " n; [[ -n "$n" ]] && git config --global user.name "$n"
+        read -r -p "Your email for Git commits: " e; [[ -n "$e" ]] && git config --global user.email "$e"
+    else
+        say "Git: $(git config --global user.name) <$(git config --global user.email)>"
+    fi
+    if [[ ! -f ~/.ssh/id_ed25519 ]]; then
+        say "creating an SSH key (~/.ssh/id_ed25519) - choose a passphrase to encrypt it"
+        ssh-keygen -t ed25519 -C "$(git config --global user.email || whoami)" -f ~/.ssh/id_ed25519
+    else
+        say "SSH key: ~/.ssh/id_ed25519"
+    fi
+    if have gh; then
+        if gh auth status >/dev/null 2>&1; then say "GitHub: signed in"
+        else say "signing in to GitHub"; gh auth login --git-protocol ssh --web || true; fi
+    fi
+    if have rustup && ! rustup default >/dev/null 2>&1; then
+        say "installing the stable Rust toolchain"; rustup default stable
+    fi
+    say "${g}ready${o}"
+}
+
+status() {
+    local t v
+    for t in git gh nvim code python node go cargo rustc clang cmake podman docker distrobox lazygit; do
+        if have "$t"; then
+            v=$("$t" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            printf '  %s%-10s%s %s\n' "$a" "$t" "$o" "${v:-installed}"
+        else
+            printf '  %s%-10s not installed%s\n' "$d" "$t" "$o"
+        fi
+    done
+}
+
+case "${1:-status}" in
+    setup) setup ;;
+    status) status ;;
+    *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
