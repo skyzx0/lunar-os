@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Lunar OS power menu.
+choice=$(printf 'Lock\nLog out\nSuspend\nRestart\nShut down\n' |
+    rofi -dmenu -i -p "Power" -theme-str 'window { width: 320px; } listview { lines: 5; }')
+case "$choice" in
+    Lock)       hyprlock ;;
+    "Log out")  hyprctl dispatch exit ;;
+    Suspend)    systemctl suspend ;;
+    Restart)    systemctl reboot ;;
+    "Shut down") systemctl poweroff ;;
+esac

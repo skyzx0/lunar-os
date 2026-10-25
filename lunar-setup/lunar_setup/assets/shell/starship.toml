@@ -1,0 +1,24 @@
+# Lunar OS prompt.
+add_newline = false
+format = "$directory$git_branch$git_status$cmd_duration$line_break$character"
+
+[directory]
+style = "bold #969fff"
+truncation_length = 3
+
+[git_branch]
+symbol = ""
+format = "[$branch]($style) "
+style = "#c8a2ff"
+
+[git_status]
+style = "#7b7f8e"
+
+[cmd_duration]
+min_time = 2000
+format = "[$duration]($style) "
+style = "#7b7f8e"
+
+[character]
+success_symbol = "[>](bold #969fff)"
+error_symbol = "[>](bold #ff7a8a)"

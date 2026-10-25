@@ -9,6 +9,46 @@ Arch Linux's official ISO profile (`releng`), with Lunar OS branding and the
                         files shared by the live ISO and installed systems:
                         os-release, the login banner, ltxs
 
+    .github/workflows/  builds the ISO and publishes it as a release
+
+## Stable by default
+
+- **Long-term-support kernel** starts the computer; the regular kernel stays
+  installed as a fallback (hold Space at power-on for the menu).
+- **Restore points** (btrfs): a snapshot before and after every install,
+  removal and update, hourly and daily ones, and one of the finished install.
+  `ltxs rollback` undoes the last change, kernel included; run it again to go
+  further back.
+- **Safe updates**: `ltxs update` checks free space, refreshes the signing
+  keys first, shows notices that need reading before updating, updates
+  everything at once, then the Flathub apps, and says when to restart.
+- **Maintenance on its own**: download servers re-ranked weekly, old package
+  downloads trimmed to three versions, SSD TRIM weekly, firmware updates
+  through fwupd.
+- **No freezes when memory runs out**: zram compressed memory, and
+  systemd-oomd closes the largest app before the whole system stalls.
+- `ltxs doctor` checks services, disk space, the firewall, encryption and
+  restore points, and says what to fix.
+
+## Encryption and privacy
+
+- LUKS2 full-disk encryption (on by default).
+- Every DNS lookup encrypted (DNS over TLS to Quad9 and Cloudflare, DNSSEC
+  checked). On a hotel or airport Wi-Fi login page: `lunar-dns portal` (10
+  minutes, then encrypted again).
+- A made-up hardware address on every Wi-Fi network, IPv6 privacy addresses.
+- Default-deny firewall (nftables), AppArmor, kernel and network hardening,
+  core dumps off, login lockout after repeated wrong passwords.
+- Firefox: HTTPS-only, tracker and fingerprint blocking, no telemetry,
+  uBlock Origin.
+- Apps: KeePassXC (passwords), VeraCrypt (encrypted volumes), age and GnuPG
+  (files), gocryptfs (encrypted folders), WireGuard (VPN), GNOME Keyring.
+
+Security profiles: **Balanced** (default; all of the above, nothing that
+blocks hardware), then Baseline, Hardened, Paranoid and Onion, which add the
+hardened kernel, USBGuard, auditd, lockdown and Tor routing at the cost of
+Bluetooth, webcams or USB devices.
+
 ## ltxs
 
 The Lunar package command. pacman does the work underneath.
@@ -16,8 +56,10 @@ The Lunar package command. pacman does the work underneath.
     ltxs install <package>...   ltxs search <term>
     ltxs remove <package>...    ltxs info <package>
     ltxs update                 ltxs list
+    ltxs rollback               ltxs snapshots
+    ltxs app install <app>      Flathub apps (also search, remove, list)
     ltxs clean                  ltxs files <package> / ltxs owns <file>
-    .github/workflows/  builds the ISO and publishes it as a release
+    ltxs doctor
 
 Changes are added to `lunar/apply.sh` one at a time. Each build is tested on
 real hardware before the next change goes in, so a failure always points at
@@ -35,7 +77,10 @@ Every desktop gets a browser, fonts, battery and power-saver support
                display settings; Konsole, Dolphin, Kate, Ark, Spectacle,
                Gwenview, Okular, KCalc, Filelight
     gnome      the full GNOME group
-    hyprland   Waybar, hyprlock, hypridle, network and Bluetooth applets
+    hyprland   the Lunar rice: floating glass bar (Waybar), rofi launcher,
+               notification centre (swaync), clipboard history, colour
+               picker, screenshot editor, power menu, hyprlock, hypridle;
+               Files, Image Viewer, Papers, Text Editor, Calculator, mpv
     sway       network and Bluetooth applets, Thunar
     i3         Alacritty, network and Bluetooth applets, Thunar, picom
 
@@ -71,9 +116,11 @@ includes a small generated file, so your own edits to those configs stay.
 On Plasma, translucent windows come from the Lunar Kvantum theme, generated
 from the accent, rather than by forcing window opacity.
 
-## Hyprland: illogical-impulse
+## Hyprland: illogical-impulse (optional)
 
-Hyprland comes as illogical-impulse (github.com/end-4/dots-hyprland,
+Lunar's own Hyprland look is the default: every piece comes from the
+official repositories, so no update can break it. The installer also offers
+illogical-impulse as an experimental alternative. When chosen, Hyprland comes as illogical-impulse (github.com/end-4/dots-hyprland,
 GPL-3.0), installed during the Lunar installation and themed as Lunar: its
 colour pipeline builds the palette from the moon wallpaper and the Lunar
 accent on first launch, with transparency on, the moon as the bar icon and

@@ -216,29 +216,46 @@ def wizard(stdscr) -> Config:
             break
         cfg.extra_desktops.append(others[j - 1].key)
 
+    # Hyprland's look: Lunar's own, from packages, or illogical-impulse.
+    if "hyprland" in cfg.all_desktops():
+        j = s.menu("Hyprland look", [
+            ("Lunar (recommended)", "Glass bar, launcher, notification centre and lock "
+                                    "screen. Everything from official packages: "
+                                    "updates never break it."),
+            ("illogical-impulse", "A Quickshell desktop built from source during the "
+                                  "install (+15-30 minutes). Experimental: a future "
+                                  "update can break it. Lunar's look stays as a fallback."),
+        ], step=step(7), index=0)
+        if j is None:
+            return None
+        cfg.rice = "ii" if j == 1 else "lunar"
+
     # 8 - security profile
     i = s.menu("Security profile", [(p.name, p.blurb) for p in PROFILES],
-               step=step(8), index=1,
-               preamble="Each profile includes the one above it. All of them "
-                        "encrypt the disk.")
+               step=step(8), index=0,
+               preamble="All of them encrypt the disk and every DNS lookup. "
+                        "Balanced is the one to choose unless you know you need more: "
+                        "the stricter ones block Bluetooth, webcams or USB devices.")
     if i is None:
         return None
     cfg.profile = PROFILES[i].key
 
     # 9 - network privacy
     i = s.menu("Network privacy", [
-        ("None", "No network identity randomisation."),
-        ("Spoof", "Randomise MAC, hostname and IPv6 each connection. "
-                  "Low cost, safe to leave on."),
-        ("Spoof + cover traffic", "Also generate decoy traffic. Weak against a "
-                                  "capable observer - see the note next."),
-    ], step=step(9), index=1,
-       preamble="Both are off unless chosen here, and both can be changed "
-                "later with the lunar-privacy command.")
+        ("Private address (recommended)", "Each Wi-Fi network sees its own made-up "
+                                          "hardware address, never the real one. "
+                                          "It stays the same there, so nothing asks "
+                                          "you to log in again."),
+        ("New address every time", "A new made-up address on every connection, and "
+                                   "the computer's name is not sent. Wi-Fi login "
+                                   "pages may ask again after each reconnect."),
+    ], step=step(9), index=0,
+       preamble="IPv6 privacy addresses and encrypted DNS are on either way. "
+                "Change later in /etc/NetworkManager/conf.d/99-lunar-privacy.conf.")
     if i is None:
         return None
-    cfg.spoof_network = i >= 1
-    cfg.cover_traffic = i == 2
+    cfg.spoof_network = i == 1
+    cfg.cover_traffic = False
 
     if cfg.cover_traffic:
         ok = s.confirm("Cover traffic", step=step(9),
@@ -260,7 +277,8 @@ def wizard(stdscr) -> Config:
     lines += [
         f"Filesystem {cfg.filesystem}    Desktop "
         f"{' + '.join(next(d.name for d in DESKTOPS if d.key == k) for k in cfg.all_desktops())}"
-        f"    Profile {p.name}",
+        f"    Profile {p.name}" + (f"    Look {'illogical-impulse' if cfg.rice == 'ii' else 'Lunar'}"
+                                    if "hyprland" in cfg.all_desktops() else ""),
         f"Keyboard {cfg.keymap}    Language {cfg.locale}    Timezone {cfg.timezone}",
         f"Host {cfg.hostname}    User {cfg.username}",
     ]

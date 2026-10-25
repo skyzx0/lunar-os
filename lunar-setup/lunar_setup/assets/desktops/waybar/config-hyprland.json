@@ -1,46 +1,57 @@
 {
     "layer": "top",
     "position": "top",
-    "height": 34,
+    "height": 36,
     "spacing": 6,
-    "modules-left": [
-        "custom/moon",
-        "hyprland/workspaces"
-    ],
-    "modules-center": [
-        "clock"
-    ],
-    "modules-right": [
-        "pulseaudio",
-        "network",
-        "bluetooth",
-        "battery",
-        "tray"
-    ],
+    "margin-top": 8,
+    "margin-left": 12,
+    "margin-right": 12,
+    "modules-left": ["custom/moon", "hyprland/workspaces", "hyprland/window"],
+    "modules-center": ["clock"],
+    "modules-right": ["tray", "cpu", "memory", "pulseaudio", "network", "bluetooth", "battery", "custom/notifications", "custom/power"],
+
     "custom/moon": {
-        "format": "\u25d7",
+        "format": "◗",
         "tooltip": false,
-        "on-click": "wofi --show drun"
+        "on-click": "pkill -x rofi || rofi -show drun"
+    },
+    "hyprland/workspaces": {
+        "format": "{icon}",
+        "format-icons": { "active": "●", "default": "○", "empty": "·" },
+        "persistent-workspaces": { "*": 5 },
+        "on-scroll-up": "hyprctl dispatch workspace e-1",
+        "on-scroll-down": "hyprctl dispatch workspace e+1"
+    },
+    "hyprland/window": {
+        "format": "{title}",
+        "max-length": 48,
+        "separate-outputs": true
     },
     "clock": {
         "format": "{:%H:%M}",
-        "format-alt": "{:%a %d %b  %H:%M}",
-        "tooltip-format": "{:%A %d %B %Y}"
+        "format-alt": "{:%A %d %B  %H:%M}",
+        "tooltip-format": "<tt>{calendar}</tt>",
+        "calendar": { "mode": "month", "format": { "today": "<span color='#969fff'><b>{}</b></span>" } }
     },
+    "cpu": { "format": "cpu {usage}%", "interval": 5, "on-click": "kitty -e btop" },
+    "memory": { "format": "mem {percentage}%", "interval": 10, "on-click": "kitty -e btop" },
     "pulseaudio": {
         "format": "vol {volume}%",
         "format-muted": "muted",
-        "on-click": "pavucontrol"
+        "scroll-step": 5,
+        "on-click": "pavucontrol",
+        "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
     },
     "network": {
         "format-wifi": "wifi {essid}",
         "format-ethernet": "wired",
         "format-disconnected": "offline",
-        "tooltip-format": "{ifname} {ipaddr}",
+        "tooltip-format": "{ifname}  {ipaddr}  {signalStrength}%",
         "on-click": "nm-connection-editor"
     },
     "bluetooth": {
         "format": "bt",
+        "format-connected": "bt {num_connections}",
         "format-off": "",
         "format-disabled": "",
         "on-click": "blueman-manager"
@@ -48,15 +59,23 @@
     "battery": {
         "format": "bat {capacity}%",
         "format-charging": "chg {capacity}%",
-        "states": {
-            "warning": 25,
-            "critical": 10
-        }
+        "format-plugged": "ac {capacity}%",
+        "states": { "warning": 25, "critical": 10 }
     },
-    "tray": {
-        "spacing": 8
+    "tray": { "spacing": 8 },
+    "custom/notifications": {
+        "exec": "swaync-client -swb",
+        "return-type": "json",
+        "format": "{icon}",
+        "format-icons": { "notification": "◉", "none": "○", "dnd-notification": "◎", "dnd-none": "◎" },
+        "on-click": "swaync-client -t -sw",
+        "on-click-right": "swaync-client -d -sw",
+        "escape": true,
+        "tooltip": false
     },
-    "margin-top": 6,
-    "margin-left": 10,
-    "margin-right": 10
+    "custom/power": {
+        "format": "⏻",
+        "tooltip": false,
+        "on-click": "lunar-power"
+    }
 }

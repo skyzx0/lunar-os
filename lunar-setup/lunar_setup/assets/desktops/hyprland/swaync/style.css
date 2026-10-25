@@ -1,0 +1,22 @@
+/* Lunar OS notifications: the same glass as the bar. */
+* { font-family: "Inter", "Noto Sans", sans-serif; font-size: 13px; }
+.notification-row { outline: none; }
+.notification, .control-center {
+    background: rgba(6, 6, 10, 0.84);
+    border: 1px solid rgba(150, 159, 255, 0.25);
+    border-radius: 18px;
+    color: #e2e5f0;
+}
+.notification { padding: 6px; margin: 6px 4px; }
+.control-center { padding: 10px; }
+.notification-content .summary { font-weight: 700; color: #e2e5f0; }
+.notification-content .body { color: #a8acba; }
+.close-button { background: rgba(255, 255, 255, 0.08); border-radius: 10px; color: #e2e5f0; }
+.widget-title > button, .notification-action, .widget-dnd > switch {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    border: none;
+    color: #e2e5f0;
+}
+.widget-dnd > switch:checked { background: #969fff; }
+.widget-mpris-player { background: rgba(255, 255, 255, 0.04); border-radius: 14px; padding: 8px; }

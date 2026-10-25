@@ -90,6 +90,25 @@ class SecurityProfile:
 
 
 PROFILES = [
+    # The default. Everything that protects data without ever getting in the
+    # way: full-disk encryption, encrypted DNS, AppArmor, a default-deny
+    # firewall, MAC randomisation, kernel and network hardening that no
+    # hardware or app depends on. The long-term-support kernel, so an update
+    # never brings a new kernel series with it.
+    SecurityProfile(
+        key="balanced",
+        name="Balanced (recommended)",
+        blurb="Encrypted disk and DNS, AppArmor, firewall, private Wi-Fi address, "
+              "LTS kernel. Every app and device works.",
+        hardened_kernel=False,
+        hardened_malloc=False,
+        usbguard=False,
+        auditd=False,
+        lockdown="",
+        secure_boot=False,
+        encrypted_swap=True,
+        mac_randomisation=True,
+    ),
     SecurityProfile(
         key="baseline",
         name="Baseline",
@@ -150,7 +169,10 @@ class Config:
     desktop: str = "hyprland"
     # More desktops installed alongside the main one; pick one at login.
     extra_desktops: list = field(default_factory=list)
-    profile: str = "hardened"
+    profile: str = "balanced"
+    # Hyprland's look: "lunar" (Lunar's own, built from packages, stable) or
+    # "ii" (illogical-impulse, built from source at install time, experimental).
+    rice: str = "lunar"
     encrypt: bool = True              # LUKS2 full-disk encryption
     fast: bool = False                # minimal console system, fastest install
     spoof_network: bool = False       # MAC/hostname/DNS randomisation at boot
