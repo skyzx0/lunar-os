@@ -173,6 +173,8 @@ class Config:
     # Hyprland's look: "lunar" (Lunar's own, built from packages, stable) or
     # "ii" (illogical-impulse, built from source at install time, experimental).
     rice: str = "lunar"
+    # Compilers, editors, containers and Git tooling (see DEV in the backend).
+    dev: bool = True
     encrypt: bool = True              # LUKS2 full-disk encryption
     fast: bool = False                # minimal console system, fastest install
     spoof_network: bool = False       # MAC/hostname/DNS randomisation at boot

@@ -1,9 +1,14 @@
 
-[1mLunar OS[0m
-[2mSee what's on the other side of the moon[0m
+  [1;34m██╗     ██╗   ██╗███╗   ██╗ █████╗ ██████╗      ██████╗ ███████╗[0m
+  [1;34m██║     ██║   ██║████╗  ██║██╔══██╗██╔══██╗    ██╔═══██╗██╔════╝[0m
+  [1;34m██║     ██║   ██║██╔██╗ ██║███████║██████╔╝    ██║   ██║███████╗[0m
+  [1;34m██║     ██║   ██║██║╚██╗██║██╔══██║██╔══██╗    ██║   ██║╚════██║[0m
+  [1;34m███████╗╚██████╔╝██║ ╚████║██║  ██║██║  ██║    ╚██████╔╝███████║[0m
+  [1;34m╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝[0m
 
-To install, run: [35mlunaros-setup[0m
+  [2mSee what's on the other side of the moon[0m
 
-For Wi-Fi, connect with [35miwctl[0m first.
-Ethernet connects automatically.
+  Install Lunar OS:     [1;34mlunaros-setup[0m
+  Wi-Fi:                [1;34miwctl[0m   then  station wlan0 connect NAME
+  Wired network connects by itself.
 

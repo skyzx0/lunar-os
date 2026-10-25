@@ -59,4 +59,11 @@ say "7. ltxs"
 install -Dm755 "$ASSETS/ltxs" "$A/usr/local/bin/ltxs"
 sed -i 's|^file_permissions=(|file_permissions=(\n  ["/usr/local/bin/ltxs"]="0:0:755"|' "$P/profiledef.sh"
 
+# 8. A larger, sharper console font: the logo and the installer's progress
+#    bar are drawn with box and block characters, which Terminus has, and
+#    the default 8x16 font is tiny on a high-resolution laptop screen.
+say "8. Console font"
+grep -qx terminus-font "$P/packages.x86_64" || echo terminus-font >> "$P/packages.x86_64"
+printf 'KEYMAP=us\nFONT=ter-v22b\n' > "$A/etc/vconsole.conf"
+
 say "done"

@@ -30,6 +30,36 @@ Arch Linux's official ISO profile (`releng`), with Lunar OS branding and the
 - `ltxs doctor` checks services, disk space, the firewall, encryption and
   restore points, and says what to fix.
 
+## Lunar Control
+
+One settings window for Wi-Fi (networks, passwords, hidden networks, Wi-Fi
+login pages), Bluetooth (search, pair, connect), sound (volume, mute, output
+and microphone choice), display (brightness, night light), power (battery
+health, power mode, lock/suspend/restart/shut down) and the system (specs,
+encryption, restore points, update, check, undo). Super+S, the app menu, or a
+click on the bar's Wi-Fi, Bluetooth, volume or battery. `lunar-control wifi`
+opens a page directly.
+
+## For developers
+
+Chosen in the installer (on by default): Python (pip, pipx, uv), Node (npm,
+pnpm), Go, Rust (rustup), C/C++ (clang, cmake, ninja, meson, gdb), Neovim,
+VS Code, tmux, lazygit, delta, GitHub CLI, jq, yq, httpie, just, direnv, and
+containers without root or a daemon: `docker` and `podman` both work, and
+distrobox runs other distributions with your home folder shared.
+`lunar-dev setup` sets your Git name, makes an SSH key, signs in to GitHub
+and installs Rust; `lunar-dev status` lists what is there.
+
+Tuned for it: high file-watcher limits, builds and package compression on
+every core, sensible Git defaults (main, rebase on pull, zdiff3, rerere),
+fuzzy history (Ctrl+R) and direnv in the shell. And for everyone: BBR
+networking, noatime mounts, no waiting for the network at boot.
+
+## Installing
+
+The installer shows a progress bar; Tab switches to the full output and
+back. The live USB greets with the Lunar OS logo in a sharp Terminus font.
+
 ## Encryption and privacy
 
 - LUKS2 full-disk encryption (on by default).

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Lunar Control
+GenericName=Settings
+Comment=Wi-Fi, Bluetooth, sound, display, power and system
+Exec=lunar-control
+Icon=lunar
+Terminal=false
+Categories=Settings;GTK;
+Keywords=wifi;wlan;network;bluetooth;sound;volume;audio;brightness;battery;power;settings;
+StartupWMClass=os.lunar.Control

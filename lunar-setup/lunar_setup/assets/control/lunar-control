@@ -1,0 +1,777 @@
+#!/usr/bin/env python3
+"""Lunar Control - Wi-Fi, Bluetooth, sound, display, power and system, in one
+window.
+
+    lunar-control [wifi|bluetooth|sound|display|power|about]
+
+One instance only: running it again (from the bar, a key, the app menu)
+brings the window forward on the page asked for. Everything it does goes
+through the system's own tools - nmcli, bluetoothctl, pactl, brightnessctl,
+powerprofilesctl - so whatever it changes is exactly what those would change,
+and nothing here keeps state of its own.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+APP_ID = "os.lunar.Control"
+PAGES = [
+    ("wifi", "Wi-Fi", "network-wireless-symbolic"),
+    ("bluetooth", "Bluetooth", "bluetooth-symbolic"),
+    ("sound", "Sound", "audio-volume-high-symbolic"),
+    ("display", "Display", "video-display-symbolic"),
+    ("power", "Power", "battery-symbolic"),
+    ("about", "System", "computer-symbolic"),
+]
+
+CSS = """
+@define-color accent_bg_color #969fff;
+@define-color accent_fg_color #0a0a14;
+@define-color accent_color #aab1ff;
+window.lunar { background-color: rgba(8, 8, 12, 0.90); }
+.lunar .sidebar-pane, .lunar .navigation-sidebar { background-color: rgba(255, 255, 255, 0.025); }
+.lunar .navigation-sidebar > row { border-radius: 12px; margin: 2px 8px; padding: 4px 6px; }
+.lunar .navigation-sidebar > row:selected { background-color: alpha(#969fff, 0.20); color: #e2e5f0; }
+.lunar list.boxed-list { background-color: rgba(255, 255, 255, 0.045); border-radius: 16px; }
+.lunar .moon { font-size: 64px; color: #969fff; }
+.lunar .hero { font-size: 26px; font-weight: 800; }
+.lunar .connected { color: #969fff; font-weight: 700; }
+.lunar .status { color: alpha(#e2e5f0, 0.55); }
+"""
+
+
+# --------------------------------------------------------------------------
+# running the system's tools
+
+
+def have(cmd):
+    return shutil.which(cmd) is not None
+
+
+def run(*args, timeout=20):
+    """(returncode, stdout, stderr); never raises."""
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "", str(exc)
+
+
+def background(work, done=None):
+    """Run work() off the UI thread, then done(result) on it."""
+    def go():
+        result = work()
+        if done:
+            GLib.idle_add(lambda: (done(result), False)[1])
+    threading.Thread(target=go, daemon=True).start()
+
+
+def nm_split(line):
+    """Split one line of nmcli -t output (':' separated, '\\:' escaped)."""
+    return [f.replace("\\:", ":") for f in re.split(r"(?<!\\):", line)]
+
+
+def clear(group):
+    """Remove the rows a page added to a preferences group."""
+    for row in getattr(group, "_rows", []):
+        group.remove(row)
+    group._rows = []
+
+
+def add(group, row):
+    group.add(row)
+    group._rows = getattr(group, "_rows", []) + [row]
+    return row
+
+
+def icon(name):
+    return Gtk.Image.new_from_icon_name(name)
+
+
+def button(label, cb, style=None, tooltip=None):
+    b = Gtk.Button(label=label, valign=Gtk.Align.CENTER, tooltip_text=tooltip)
+    if style:
+        b.add_css_class(style)
+    b.connect("clicked", lambda _b: cb())
+    return b
+
+
+def icon_button(name, cb, tooltip):
+    b = Gtk.Button(icon_name=name, valign=Gtk.Align.CENTER, tooltip_text=tooltip)
+    b.add_css_class("flat")
+    b.connect("clicked", lambda _b: cb())
+    return b
+
+
+# --------------------------------------------------------------------------
+# pages
+
+
+class Page(Adw.PreferencesPage):
+    key = ""
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+
+    def refresh(self):
+        pass
+
+    def toast(self, text):
+        self.win.toast(text)
+
+
+class WifiPage(Page):
+    key = "wifi"
+
+    def __init__(self, win):
+        super().__init__(win)
+        top = Adw.PreferencesGroup()
+        self.switch = Adw.SwitchRow(title="Wi-Fi")
+        self._switch_handler = self.switch.connect("notify::active", self.on_toggle)
+        top.add(self.switch)
+        self.add(top)
+
+        self.nets = Adw.PreferencesGroup(title="Networks")
+        self.scan_btn = icon_button("view-refresh-symbolic", self.scan, "Search again")
+        self.nets.set_header_suffix(self.scan_btn)
+        self.add(self.nets)
+
+        extra = Adw.PreferencesGroup(title="More")
+        portal = Adw.ActionRow(title="Wi-Fi login page",
+                               subtitle="Hotel, train or airport Wi-Fi asks you to sign in: "
+                                        "use the network's own DNS for 10 minutes")
+        portal.add_suffix(button("Open", self.portal))
+        extra.add(portal)
+        hidden = Adw.ActionRow(title="Hidden network", subtitle="Connect by name")
+        hidden.add_suffix(button("Connect…", lambda: self.ask_password(None)))
+        extra.add(hidden)
+        self.add(extra)
+
+    def refresh(self):
+        if not have("nmcli"):
+            clear(self.nets)
+            add(self.nets, Adw.ActionRow(title="Wi-Fi is not available",
+                                         subtitle="NetworkManager is not installed"))
+            return
+        background(lambda: run("nmcli", "radio", "wifi")[1].strip(), self._show_radio)
+
+    def _show_radio(self, state):
+        self.switch.handler_block(self._switch_handler)
+        self.switch.set_active(state == "enabled")
+        self.switch.handler_unblock(self._switch_handler)
+        if state == "enabled":
+            self.scan(rescan="auto")
+        else:
+            clear(self.nets)
+            add(self.nets, Adw.ActionRow(title="Wi-Fi is off"))
+
+    def on_toggle(self, row, _p):
+        on = row.get_active()
+        background(lambda: run("nmcli", "radio", "wifi", "on" if on else "off"),
+                   lambda _r: GLib.timeout_add(1500, lambda: (self.refresh(), False)[1]))
+
+    def scan(self, rescan="yes"):
+        self.scan_btn.set_sensitive(False)
+        clear(self.nets)
+        spin = Adw.ActionRow(title="Searching…")
+        spin.add_suffix(Gtk.Spinner(spinning=True))
+        add(self.nets, spin)
+
+        def work():
+            _, known, _ = run("nmcli", "-t", "-f", "NAME,TYPE", "connection", "show")
+            saved = {nm_split(l)[0] for l in known.splitlines()
+                     if l.endswith(":802-11-wireless") or l.endswith(":wifi")}
+            rc, out, err = run("nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY",
+                               "device", "wifi", "list", "--rescan", rescan, timeout=30)
+            nets = {}
+            for line in out.splitlines():
+                f = nm_split(line)
+                if len(f) < 4 or not f[1]:
+                    continue
+                inuse, ssid, sig, sec = f[0] == "*", f[1], int(f[2] or 0), f[3]
+                if ssid not in nets or inuse or sig > nets[ssid]["signal"]:
+                    nets[ssid] = {"ssid": ssid, "signal": sig, "secure": bool(sec and sec != "--"),
+                                  "inuse": inuse or nets.get(ssid, {}).get("inuse", False),
+                                  "saved": ssid in saved}
+            return sorted(nets.values(), key=lambda n: (not n["inuse"], -n["signal"]))
+
+        background(work, self._show_networks)
+
+    def _show_networks(self, nets):
+        self.scan_btn.set_sensitive(True)
+        clear(self.nets)
+        if not nets:
+            add(self.nets, Adw.ActionRow(title="No networks found"))
+        for n in nets:
+            level = "excellent" if n["signal"] > 75 else "good" if n["signal"] > 50 \
+                else "ok" if n["signal"] > 25 else "weak"
+            row = Adw.ActionRow(title=GLib.markup_escape_text(n["ssid"]),
+                                subtitle="Connected" if n["inuse"] else
+                                "Saved" if n["saved"] else ("Secured" if n["secure"] else "Open"))
+            row.add_prefix(icon(f"network-wireless-signal-{level}-symbolic"))
+            if n["inuse"]:
+                row.add_css_class("connected")
+                row.add_suffix(button("Disconnect", lambda s=n["ssid"]: self.disconnect(s)))
+            else:
+                if n["secure"]:
+                    row.add_suffix(icon("channel-secure-symbolic"))
+                row.set_activatable(True)
+                row.connect("activated", lambda _r, net=n: self.connect_to(net))
+            if n["saved"]:
+                row.add_suffix(icon_button("user-trash-symbolic",
+                                           lambda s=n["ssid"]: self.forget(s), "Forget"))
+            add(self.nets, row)
+
+    def connect_to(self, net):
+        if net["secure"] and not net["saved"]:
+            self.ask_password(net["ssid"])
+            return
+        self.toast(f"Connecting to {net['ssid']}…")
+        cmd = ("nmcli", "connection", "up", "id", net["ssid"]) if net["saved"] else \
+              ("nmcli", "device", "wifi", "connect", net["ssid"])
+        background(lambda: run(*cmd, timeout=45), lambda r: self._after_connect(net["ssid"], r))
+
+    def ask_password(self, ssid):
+        d = Adw.AlertDialog(heading=f"Connect to {ssid}" if ssid else "Hidden network",
+                            body="" if ssid else "The network's name and password")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        name = Gtk.Entry(placeholder_text="Network name")
+        pw = Gtk.PasswordEntry(placeholder_text="Password", show_peek_icon=True)
+        if not ssid:
+            box.append(name)
+        box.append(pw)
+        d.set_extra_child(box)
+        d.add_response("cancel", "Cancel")
+        d.add_response("connect", "Connect")
+        d.set_response_appearance("connect", Adw.ResponseAppearance.SUGGESTED)
+        d.set_default_response("connect")
+        pw.connect("activate", lambda _e: (d.close(), self._connect_with(ssid or name.get_text(),
+                                                                           pw.get_text(), not ssid)))
+
+        def on_response(_d, resp):
+            if resp == "connect":
+                self._connect_with(ssid or name.get_text(), pw.get_text(), not ssid)
+        d.connect("response", on_response)
+        d.present(self.win)
+
+    def _connect_with(self, ssid, password, hidden):
+        if not ssid:
+            return
+        self.toast(f"Connecting to {ssid}…")
+        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        if hidden:
+            cmd += ["hidden", "yes"]
+        background(lambda: run(*cmd, timeout=45), lambda r: self._after_connect(ssid, r))
+
+    def _after_connect(self, ssid, result):
+        rc, _out, err = result
+        if rc == 0:
+            self.toast(f"Connected to {ssid}")
+        else:
+            msg = "Wrong password" if "Secrets were required" in err or "802-1X" in err \
+                else (err.strip().splitlines() or ["Could not connect"])[-1][:90]
+            self.toast(msg)
+            # A failed first attempt leaves a saved profile behind; remove it so
+            # the next try asks for the password again.
+            run("nmcli", "connection", "delete", "id", ssid)
+        self.scan(rescan="no")
+
+    def disconnect(self, ssid):
+        background(lambda: run("nmcli", "connection", "down", "id", ssid),
+                   lambda _r: self.scan(rescan="no"))
+
+    def forget(self, ssid):
+        background(lambda: run("nmcli", "connection", "delete", "id", ssid),
+                   lambda _r: (self.toast(f"Forgot {ssid}"), self.scan(rescan="no")))
+
+    def portal(self):
+        background(lambda: run("pkexec", "/usr/local/bin/lunar-dns", "portal", timeout=120),
+                   lambda r: (self.toast("Open any website to reach the login page"
+                                         if r[0] == 0 else "Not changed"),
+                              Gio.AppInfo.launch_default_for_uri("http://neverssl.com", None)
+                              if r[0] == 0 else None))
+
+
+class BluetoothPage(Page):
+    key = "bluetooth"
+
+    def __init__(self, win):
+        super().__init__(win)
+        top = Adw.PreferencesGroup()
+        self.switch = Adw.SwitchRow(title="Bluetooth")
+        self._h = self.switch.connect("notify::active", self.on_toggle)
+        top.add(self.switch)
+        self.add(top)
+        self.devs = Adw.PreferencesGroup(title="Devices")
+        self.scan_btn = button("Search", self.scan)
+        self.devs.set_header_suffix(self.scan_btn)
+        self.add(self.devs)
+
+    def refresh(self):
+        if not have("bluetoothctl"):
+            clear(self.devs)
+            add(self.devs, Adw.ActionRow(title="Bluetooth is not available"))
+            return
+        background(self._read, self._show)
+
+    def _read(self):
+        _, show, _ = run("bluetoothctl", "show")
+        powered = "Powered: yes" in show
+        devices = []
+        _, out, _ = run("bluetoothctl", "devices")
+        for line in out.splitlines():
+            m = re.match(r"Device ([0-9A-F:]{17}) (.*)", line)
+            if not m:
+                continue
+            _, info, _ = run("bluetoothctl", "info", m.group(1))
+            devices.append({"mac": m.group(1), "name": m.group(2),
+                            "paired": "Paired: yes" in info,
+                            "connected": "Connected: yes" in info,
+                            "icon": (re.search(r"Icon: (\S+)", info) or [None, "bluetooth"])[1]})
+        devices.sort(key=lambda d: (not d["connected"], not d["paired"], d["name"].lower()))
+        return powered, devices, bool(show.strip())
+
+    def _show(self, data):
+        powered, devices, present = data
+        self.switch.handler_block(self._h)
+        self.switch.set_active(powered)
+        self.switch.handler_unblock(self._h)
+        self.scan_btn.set_sensitive(powered)
+        clear(self.devs)
+        if not present:
+            add(self.devs, Adw.ActionRow(title="No Bluetooth adapter found"))
+            return
+        if not powered:
+            add(self.devs, Adw.ActionRow(title="Bluetooth is off"))
+            return
+        if not devices:
+            add(self.devs, Adw.ActionRow(title="No devices yet", subtitle="Press Search, with the "
+                                                                          "device in pairing mode"))
+        for d in devices:
+            row = Adw.ActionRow(title=GLib.markup_escape_text(d["name"]),
+                                subtitle="Connected" if d["connected"] else
+                                "Paired" if d["paired"] else "Not paired")
+            row.add_prefix(icon(f"{d['icon']}-symbolic" if d["icon"] else "bluetooth-symbolic"))
+            if d["connected"]:
+                row.add_css_class("connected")
+                row.add_suffix(button("Disconnect", lambda m=d["mac"]: self.act("disconnect", m)))
+            elif d["paired"]:
+                row.add_suffix(button("Connect", lambda m=d["mac"]: self.act("connect", m),
+                                      "suggested-action"))
+            else:
+                row.add_suffix(button("Pair", lambda m=d["mac"]: self.pair(m), "suggested-action"))
+            if d["paired"]:
+                row.add_suffix(icon_button("user-trash-symbolic",
+                                           lambda m=d["mac"]: self.act("remove", m), "Forget"))
+            add(self.devs, row)
+
+    def on_toggle(self, row, _p):
+        on = row.get_active()
+        background(lambda: (run("rfkill", "unblock", "bluetooth") if on else None,
+                            run("bluetoothctl", "power", "on" if on else "off")),
+                   lambda _r: GLib.timeout_add(800, lambda: (self.refresh(), False)[1]))
+
+    def scan(self):
+        self.scan_btn.set_sensitive(False)
+        self.toast("Searching for 10 seconds…")
+        background(lambda: run("bluetoothctl", "--timeout", "10", "scan", "on", timeout=15),
+                   lambda _r: self.refresh())
+
+    def pair(self, mac):
+        self.toast("Pairing…")
+        background(lambda: (run("bluetoothctl", "pair", mac, timeout=30),
+                            run("bluetoothctl", "trust", mac),
+                            run("bluetoothctl", "connect", mac, timeout=20))[-1],
+                   lambda r: (self.toast("Connected" if r[0] == 0 else "Could not connect"),
+                              self.refresh()))
+
+    def act(self, what, mac):
+        background(lambda: run("bluetoothctl", what, mac, timeout=20), lambda _r: self.refresh())
+
+
+class SoundPage(Page):
+    key = "sound"
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.out = Adw.PreferencesGroup(title="Output")
+        self.add(self.out)
+        self.inp = Adw.PreferencesGroup(title="Input")
+        self.add(self.inp)
+        more = Adw.PreferencesGroup()
+        adv = Adw.ActionRow(title="Every app and device", subtitle="Per-app volume, profiles")
+        adv.add_suffix(button("Open", lambda: subprocess.Popen(["pavucontrol"])))
+        more.add(adv)
+        self.add(more)
+
+    def refresh(self):
+        if not have("pactl"):
+            clear(self.out)
+            add(self.out, Adw.ActionRow(title="Sound control is not available"))
+            return
+        background(self._read, self._show)
+
+    @staticmethod
+    def _read():
+        def devices(kind):
+            _, out, _ = run("pactl", "-f", "json", "list", kind)
+            try:
+                items = json.loads(out or "[]")
+            except ValueError:
+                items = []
+            return [i for i in items if not i.get("name", "").endswith(".monitor")]
+        default_sink = run("pactl", "get-default-sink")[1].strip()
+        default_src = run("pactl", "get-default-source")[1].strip()
+        return devices("sinks"), default_sink, devices("sources"), default_src
+
+    def _show(self, data):
+        sinks, dsink, sources, dsrc = data
+        self._fill(self.out, sinks, dsink, "sink", "audio-volume-high-symbolic")
+        self._fill(self.inp, sources, dsrc, "source", "audio-input-microphone-symbolic")
+
+    def _fill(self, group, items, default, kind, icon_name):
+        clear(group)
+        if not items:
+            add(group, Adw.ActionRow(title="Nothing connected"))
+            return
+        current = next((i for i in items if i["name"] == default), items[0])
+        vol = list(current.get("volume", {}).values())
+        pct = int(vol[0]["value_percent"].rstrip("%")) if vol else 50
+        row = Adw.ActionRow(title="Volume")
+        row.add_prefix(icon(icon_name))
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        scale.set_hexpand(True)
+        scale.set_size_request(240, -1)
+        scale.set_value(pct)
+        scale.connect("value-changed", lambda s: run(f"pactl", f"set-{kind}-volume",
+                                                     current["name"], f"{int(s.get_value())}%"))
+        row.add_suffix(scale)
+        mute = Gtk.ToggleButton(icon_name="audio-volume-muted-symbolic", valign=Gtk.Align.CENTER,
+                                active=current.get("mute", False), tooltip_text="Mute")
+        mute.add_css_class("flat")
+        mute.connect("toggled", lambda b: run("pactl", f"set-{kind}-mute", current["name"],
+                                              "1" if b.get_active() else "0"))
+        row.add_suffix(mute)
+        add(group, row)
+        if len(items) > 1:
+            names = [i.get("description", i["name"]) for i in items]
+            combo = Adw.ComboRow(title="Device", model=Gtk.StringList.new(names))
+            combo.set_selected(items.index(current))
+            combo.connect("notify::selected", lambda c, _p: (
+                run("pactl", f"set-default-{kind}", items[c.get_selected()]["name"]),
+                GLib.timeout_add(300, lambda: (self.refresh(), False)[1])))
+            add(group, combo)
+        else:
+            add(group, Adw.ActionRow(title="Device", subtitle=GLib.markup_escape_text(
+                current.get("description", current["name"]))))
+
+
+class DisplayPage(Page):
+    key = "display"
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.g = Adw.PreferencesGroup(title="Screen")
+        self.add(self.g)
+        look = Adw.PreferencesGroup(title="Look")
+        row = Adw.ActionRow(title="Lunar Look", subtitle="Accent colour, transparency, blur, "
+                                                         "corners, animations, wallpaper")
+        row.add_suffix(button("Open", lambda: subprocess.Popen(["lunar-look"])))
+        look.add(row)
+        self.add(look)
+
+    def refresh(self):
+        background(self._read, self._show)
+
+    @staticmethod
+    def _read():
+        b = None
+        if have("brightnessctl"):
+            rc, out, _ = run("brightnessctl", "-m", "-c", "backlight")
+            if rc == 0 and out:
+                b = int(out.split(",")[3].rstrip("%"))
+        night = run("pgrep", "-x", "hyprsunset")[0] == 0
+        return b, night
+
+    def _show(self, data):
+        b, night = data
+        clear(self.g)
+        if b is not None:
+            row = Adw.ActionRow(title="Brightness")
+            row.add_prefix(icon("display-brightness-symbolic"))
+            s = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 5, 100, 1)
+            s.set_hexpand(True)
+            s.set_size_request(260, -1)
+            s.set_value(b)
+            s.connect("value-changed", lambda s: run("brightnessctl", "-q", "-c", "backlight",
+                                                     "set", f"{int(s.get_value())}%"))
+            row.add_suffix(s)
+            add(self.g, row)
+        if have("hyprsunset"):
+            n = Adw.SwitchRow(title="Night light", subtitle="Warmer colours, easier on the eyes "
+                                                              "in the evening")
+            n.set_active(night)
+            n.connect("notify::active", lambda r, _p: subprocess.Popen(
+                ["hyprsunset", "-t", "4200"], start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if r.get_active() else run("pkill", "-x", "hyprsunset"))
+            add(self.g, n)
+        if b is None and not have("hyprsunset"):
+            add(self.g, Adw.ActionRow(title="Nothing to adjust on this screen"))
+
+
+class PowerPage(Page):
+    key = "power"
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.bat = Adw.PreferencesGroup(title="Battery")
+        self.add(self.bat)
+        self.mode = Adw.PreferencesGroup(title="Mode")
+        self.add(self.mode)
+        act = Adw.PreferencesGroup(title="Session")
+        box = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER, margin_top=6)
+        for label, cmd, style in [("Lock", ["loginctl", "lock-session"], None),
+                                  ("Suspend", ["systemctl", "suspend"], None),
+                                  ("Restart", ["systemctl", "reboot"], None),
+                                  ("Shut down", ["systemctl", "poweroff"], "destructive-action")]:
+            b = button(label, lambda c=cmd: subprocess.Popen(c), style)
+            b.add_css_class("pill")
+            box.append(b)
+        act.add(box)
+        self.add(act)
+
+    def refresh(self):
+        background(self._read, self._show)
+
+    @staticmethod
+    def _read():
+        bat = None
+        if have("upower"):
+            _, devs, _ = run("upower", "-e")
+            path = next((d for d in devs.split() if "BAT" in d), None)
+            if path:
+                _, info, _ = run("upower", "-i", path)
+                g = lambda k: (re.search(rf"^\s*{k}:\s*(.+)$", info, re.M) or [None, ""])[1]
+                bat = {"pct": g("percentage"), "state": g("state"), "time": g("time to empty")
+                       or g("time to full"), "health": g("capacity")}
+        mode, modes = None, []
+        if have("powerprofilesctl"):
+            mode = run("powerprofilesctl", "get")[1].strip()
+            modes = re.findall(r"^\*?\s*([a-z-]+):$", run("powerprofilesctl", "list")[1], re.M)
+        return bat, mode, modes
+
+    def _show(self, data):
+        bat, mode, modes = data
+        clear(self.bat)
+        if bat:
+            r = Adw.ActionRow(title=bat["pct"] or "Battery",
+                              subtitle=" · ".join(x for x in [bat["state"], bat["time"]] if x))
+            r.add_prefix(icon("battery-symbolic"))
+            add(self.bat, r)
+            if bat["health"]:
+                add(self.bat, Adw.ActionRow(title="Health",
+                                            subtitle=f"{bat['health']} of the original capacity"))
+        else:
+            add(self.bat, Adw.ActionRow(title="No battery", subtitle="Running on mains power"))
+        clear(self.mode)
+        if modes:
+            names = {"power-saver": "Power saver", "balanced": "Balanced",
+                     "performance": "Performance"}
+            order = [m for m in ["power-saver", "balanced", "performance"] if m in modes]
+            c = Adw.ComboRow(title="Power mode", model=Gtk.StringList.new([names[m] for m in order]))
+            if mode in order:
+                c.set_selected(order.index(mode))
+            c.connect("notify::selected", lambda c, _p: run("powerprofilesctl", "set",
+                                                            order[c.get_selected()]))
+            add(self.mode, c)
+        else:
+            add(self.mode, Adw.ActionRow(title="Power modes are not available"))
+
+
+class AboutPage(Page):
+    key = "about"
+
+    def __init__(self, win):
+        super().__init__(win)
+        head = Adw.PreferencesGroup()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_top=12,
+                      margin_bottom=12)
+        moon = Gtk.Label(label="◗")
+        moon.add_css_class("moon")
+        name = Gtk.Label(label="Lunar OS")
+        name.add_css_class("hero")
+        slogan = Gtk.Label(label="See what's on the other side of the moon")
+        slogan.add_css_class("status")
+        for w in (moon, name, slogan):
+            box.append(w)
+        head.add(box)
+        self.add(head)
+        self.info = Adw.PreferencesGroup(title="This computer")
+        self.add(self.info)
+        tools = Adw.PreferencesGroup(title="Maintenance")
+        for title, sub, cmd in [
+            ("Update", "Everything, with a restore point first", "ltxs update"),
+            ("Check for problems", "Services, disk, firewall, encryption, restore points",
+             "ltxs doctor"),
+            ("Undo the last update", "Back to the restore point before it", "ltxs rollback"),
+        ]:
+            r = Adw.ActionRow(title=title, subtitle=sub)
+            r.add_suffix(button("Run", lambda c=cmd: self.in_terminal(c)))
+            tools.add(r)
+        self.add(tools)
+
+    @staticmethod
+    def in_terminal(cmd):
+        term = next((t for t in ("kitty", "foot", "alacritty", "konsole", "gnome-terminal")
+                     if have(t)), None)
+        if term:
+            subprocess.Popen([term, "-e", "sh", "-c", f"{cmd}; echo; read -p 'Press Enter to close ' _"])
+
+    def refresh(self):
+        background(self._read, self._show)
+
+    @staticmethod
+    def _read():
+        rows = []
+        try:
+            osr = dict(l.split("=", 1) for l in open("/etc/os-release").read().splitlines() if "=" in l)
+            rows.append(("System", osr.get("PRETTY_NAME", "Lunar OS").strip('"')))
+        except OSError:
+            pass
+        rows.append(("Kernel", os.uname().release))
+        try:
+            cpu = re.search(r"model name\s*:\s*(.+)", open("/proc/cpuinfo").read())
+            rows.append(("Processor", f"{cpu.group(1) if cpu else 'Unknown'} × {os.cpu_count()}"))
+            mem = int(re.search(r"MemTotal:\s+(\d+)", open("/proc/meminfo").read()).group(1))
+            rows.append(("Memory", f"{mem / 1024 / 1024:.1f} GB"))
+        except (OSError, AttributeError):
+            pass
+        st = os.statvfs("/")
+        rows.append(("Disk", f"{st.f_bavail * st.f_frsize / 1e9:.0f} GB free of "
+                             f"{st.f_blocks * st.f_frsize / 1e9:.0f} GB"))
+        crypt = "crypt" in run("lsblk", "-no", "TYPE")[1].split()
+        rows.append(("Encryption", "Disk encrypted" if crypt else "Disk not encrypted"))
+        if have("snapper"):
+            n = len(run("snapper", "-c", "root", "list")[1].splitlines()) - 3
+            rows.append(("Restore points", str(max(n, 0)) if n >= 0 else "Not set up"))
+        return rows
+
+    def _show(self, rows):
+        clear(self.info)
+        for k, v in rows:
+            add(self.info, Adw.ActionRow(title=k, subtitle=GLib.markup_escape_text(v)))
+
+
+# --------------------------------------------------------------------------
+# the window
+
+
+class ControlWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Lunar Control")
+        self.set_default_size(860, 620)
+        self.add_css_class("lunar")
+        self.toasts = Adw.ToastOverlay()
+
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE,
+                               transition_duration=160)
+        self.pages = {}
+        for cls in (WifiPage, BluetoothPage, SoundPage, DisplayPage, PowerPage, AboutPage):
+            p = cls(self)
+            self.pages[p.key] = p
+            self.stack.add_named(p, p.key)
+
+        self.sidebar = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.sidebar.add_css_class("navigation-sidebar")
+        self._rows = {}
+        for key, title, ico in PAGES:
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(spacing=12, margin_top=8, margin_bottom=8, margin_start=6)
+            box.append(icon(ico))
+            box.append(Gtk.Label(label=title, xalign=0))
+            row.set_child(box)
+            row.key = key
+            self.sidebar.append(row)
+            self._rows[key] = row
+        self.sidebar.connect("row-selected", lambda _l, r: r and self.show_page(r.key, False))
+
+        side = Adw.ToolbarView()
+        side_header = Adw.HeaderBar()
+        side_title = Gtk.Label(label="◗  Lunar")
+        side_title.add_css_class("heading")
+        side_header.set_title_widget(side_title)
+        side_header.set_show_end_title_buttons(False)
+        side.add_top_bar(side_header)
+        side.set_content(self.sidebar)
+
+        main = Adw.ToolbarView()
+        self.title = Adw.WindowTitle()
+        main.add_top_bar(Adw.HeaderBar(title_widget=self.title))
+        main.set_content(self.stack)
+
+        split = Adw.NavigationSplitView(min_sidebar_width=200, max_sidebar_width=230)
+        split.set_sidebar(Adw.NavigationPage(child=side, title="Lunar"))
+        split.set_content(Adw.NavigationPage(child=main, title="Lunar Control"))
+        self.toasts.set_child(split)
+        self.set_content(self.toasts)
+
+        esc = Gtk.ShortcutController()
+        esc.add_shortcut(Gtk.Shortcut(trigger=Gtk.ShortcutTrigger.parse_string("Escape"),
+                                      action=Gtk.CallbackAction.new(lambda *_: (self.close(), True)[1])))
+        self.add_controller(esc)
+
+    def show_page(self, key, select=True):
+        key = key if key in self.pages else "wifi"
+        if select:
+            self.sidebar.select_row(self._rows[key])
+        self.stack.set_visible_child_name(key)
+        self.title.set_title(dict((k, t) for k, t, _ in PAGES)[key])
+        self.pages[key].refresh()
+
+    def toast(self, text):
+        self.toasts.add_toast(Adw.Toast(title=GLib.markup_escape_text(text), timeout=3))
+
+
+class ControlApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID,
+                         flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.win = None
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
+        css = Gtk.CssProvider()
+        css.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css,
+                                                  Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def do_command_line(self, cmdline):
+        args = cmdline.get_arguments()[1:]
+        page = args[0] if args else "wifi"
+        if page in ("-h", "--help"):
+            cmdline.print_literal(__doc__.strip() + "\n")
+            return 0
+        if not self.win:
+            self.win = ControlWindow(self)
+        self.win.show_page(page)
+        self.win.present()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(ControlApp().run(sys.argv))

@@ -8,8 +8,10 @@
 import argparse
 import curses
 import json
+import locale
 import os
 import subprocess
+import threading
 import time
 import sys
 
@@ -240,6 +242,17 @@ def wizard(stdscr) -> Config:
         return None
     cfg.profile = PROFILES[i].key
 
+    # Developer tools
+    j = s.menu("Developer tools", [
+        ("Install (recommended)", "Python, Node, Go, Rust, C/C++, Neovim, VS Code, Git tools, "
+                                  "and containers (docker and podman, no root needed). "
+                                  "About 2 GB."),
+        ("Skip", "Add any of them later with ltxs install."),
+    ], step=step(8), index=0)
+    if j is None:
+        return None
+    cfg.dev = j == 0
+
     # 9 - network privacy
     i = s.menu("Network privacy", [
         ("Private address (recommended)", "Each Wi-Fi network sees its own made-up "
@@ -351,56 +364,57 @@ def show_failure() -> None:
 
 
 def run_install(stdscr, cfg) -> bool:
-    """Run the installation. Returns True on success.
+    """Run the installation behind a progress bar. Returns True on success.
 
-    The log file stays open for the whole function and is closed by the
-    context manager on the way out, after the last emit. Closing it in a
-    finally block and then emitting again - which is what an earlier version
-    did - crashes on a closed file and buries whatever the real failure was.
+    The installation runs in a worker thread; this thread only draws (curses
+    is not thread-safe). Tab switches between the progress bar and the full
+    output. Everything is also written to LOG_PATH: the line that explains a
+    failure is often long gone from any screen.
     """
     ui.init_colors()
-    s = ui.Screen(stdscr)
-    screen_log = s.log_view("Installing")
+    custom_total = 0
+    try:
+        custom_total = len(archinstall_backend.lunar_layer(cfg))
+    except Exception:                                 # noqa: BLE001
+        pass
+    progress = ui.InstallProgress(stdscr, custom_total)
+    result = {"failed": False}
 
-    failed = False
-
-    # Everything the installer prints goes to a file as well as the screen.
-    # A curses log view holds only what fits, and the line that explains a
-    # failure is usually the one that has already scrolled away.
     with open(LOG_PATH, "w", buffering=1) as log_file:
+        lock = threading.Lock()
 
         def emit(line: str, accent: bool = False) -> None:
-            # The screen is the thing the user is looking at; never let a
-            # logging problem take the installer down with it.
+            with lock:
+                try:
+                    log_file.write(line + "\n")
+                except (ValueError, OSError):
+                    pass
+            progress.feed(line, accent)
+
+        def work():
+            emit(f"lunaros-setup {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            emit(f"target {cfg.disk}   filesystem {cfg.filesystem}   "
+                 f"encrypted {'yes' if cfg.encrypt else 'no'}")
+            emit(f"desktop {cfg.desktop}   profile {cfg.profile}")
+            emit("")
             try:
-                log_file.write(line + "\n")
-            except (ValueError, OSError):
-                pass
-            screen_log(line, accent)
+                installer_for(ENGINE).install(cfg, emit)
+            except Exception as exc:                  # noqa: BLE001
+                result["failed"] = True
+                emit("")
+                emit("Installation failed.", accent=True)
+                for line in str(exc).splitlines():
+                    emit("  " + line)
+                emit("")
+                emit(f"The full transcript is at {LOG_PATH}")
+            progress.finish(result["failed"])
 
-        emit(f"lunaros-setup {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        emit(f"target {cfg.disk}   filesystem {cfg.filesystem}   "
-             f"encrypted {'yes' if cfg.encrypt else 'no'}")
-        emit(f"desktop {cfg.desktop}   profile {cfg.profile}")
-        emit("")
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+        progress.run(worker)
+        worker.join()
 
-        try:
-            installer_for(ENGINE).install(cfg, emit)
-        except Exception as exc:                      # noqa: BLE001
-            failed = True
-            emit("")
-            emit("Installation failed.", accent=True)
-            for line in str(exc).splitlines():
-                emit("  " + line)
-            emit("")
-            emit(f"The full transcript is at {LOG_PATH}")
-            emit("Reach a shell with Ctrl+Alt+F2 to read it.")
-
-        emit("")
-        emit("press any key to continue")
-        stdscr.getch()
-
-    return not failed
+    return not result["failed"]
 
 
 def installer_for(engine: str):
@@ -437,6 +451,12 @@ def main() -> int:
     ap.add_argument("--memory", action="store_true",
                     help="report current memory use, for checking idle claims")
     args = ap.parse_args()
+    # Box and block characters in the logo and the progress bar need the
+    # console's UTF-8 locale; curses uses the C locale otherwise.
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
     global ENGINE
     ENGINE = args.engine
 

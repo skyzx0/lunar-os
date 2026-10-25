@@ -6,7 +6,11 @@ stable on both a 80x25 VGA console and a 200-column terminal.
 """
 
 import curses
+import locale
+import re
 import textwrap
+import threading
+import time
 
 MEASURE = 74
 
@@ -207,3 +211,201 @@ class Screen:
             self.s.refresh()
 
         return emit
+
+
+# --------------------------------------------------------------------------
+# installation progress
+
+
+LOGO = [
+    "██╗     ██╗   ██╗███╗   ██╗ █████╗ ██████╗      ██████╗ ███████╗",
+    "██║     ██║   ██║████╗  ██║██╔══██╗██╔══██╗    ██╔═══██╗██╔════╝",
+    "██║     ██║   ██║██╔██╗ ██║███████║██████╔╝    ██║   ██║███████╗",
+    "██║     ██║   ██║██║╚██╗██║██╔══██║██╔══██╗    ██║   ██║╚════██║",
+    "███████╗╚██████╔╝██║ ╚████║██║  ██║██║  ██║    ╚██████╔╝███████║",
+    "╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝",
+]
+SLOGAN = "See what's on the other side of the moon"
+
+# What the installer is doing, recognised from its own output. Each phase
+# owns a stretch of the bar; the bar only ever moves forward.
+PHASES = [
+    (("checking the connection",), "Checking the connection", 0, 3),
+    (("checking the package list",), "Checking packages", 3, 6),
+    (("installing with archinstall", "starting installation"), "Starting", 6, 8),
+    (("wiping", "partition", "formatting", "mkfs"), "Preparing the disk", 8, 14),
+    (("luks", "encrypt", "cryptsetup"), "Encrypting the disk", 14, 18),
+    (("pacstrap", "installing packages", "downloading", "installing ", "upgrading",
+      "retrieving", "packages ("), "Installing the system", 18, 72),
+    (("bootloader", "bootctl", "systemd-boot"), "Installing the boot loader", 72, 76),
+    (("creating user", "setting password", "sudo permissions", "enabling service"),
+     "Setting up your account", 76, 79),
+    (("executing custom command",), "Applying Lunar OS", 79, 98),
+    (("installation complete",), "Lunar OS is installed", 100, 100),
+]
+
+
+def _utf8() -> bool:
+    return "utf" in (locale.getpreferredencoding(False) or "").lower()
+
+_COUNT = re.compile(r"\(\s*(\d+)/(\d+)\)")
+
+
+class InstallProgress:
+    """A progress bar for the installation; Tab shows the full output.
+
+    The installation runs in a worker thread that only calls feed(); all
+    drawing happens on the main thread in run(), so curses is never touched
+    from two threads.
+    """
+
+    def __init__(self, stdscr, custom_total: int = 0):
+        self.s = stdscr
+        self.lines = []
+        self.lock = threading.Lock()
+        self.phase = -1
+        self.pct = 0.0
+        self.custom_total = max(custom_total, 1)
+        self.custom_done = 0
+        self.details = False
+        self.started = time.time()
+        self.last_line_at = time.time()
+        self.finished = False
+        self.failed = False
+
+    # ---- fed from the worker thread ----------------------------------------
+
+    def feed(self, line: str, accent: bool = False) -> None:
+        low = line.lower()
+        with self.lock:
+            self.lines.append((line, accent))
+            del self.lines[:-2000]
+            self.last_line_at = time.time()
+            for i, (keys, _label, _a, _b) in enumerate(PHASES):
+                if any(k in low for k in keys):
+                    if i > self.phase:
+                        self.phase = i
+                        self.pct = max(self.pct, PHASES[i][2])
+                    break
+            if self.phase < 0:
+                return
+            _keys, _label, start, end = PHASES[self.phase]
+            if "executing custom command" in low:
+                self.custom_done += 1
+                self.pct = max(self.pct, start + (end - start) *
+                               min(self.custom_done / self.custom_total, 1))
+            elif (m := _COUNT.search(line)) and self.phase == 5 and int(m.group(2)):
+                frac = int(m.group(1)) / int(m.group(2))
+                self.pct = max(self.pct, start + (end - start) * 0.85 * frac)
+            else:
+                self.pct += (end - self.pct) * 0.012
+
+    def finish(self, failed: bool) -> None:
+        with self.lock:
+            self.finished = True
+            self.failed = failed
+            if not failed:
+                self.phase = len(PHASES) - 1
+                self.pct = 100.0
+            else:
+                self.details = True
+
+    # ---- the main thread ---------------------------------------------------
+
+    def run(self, worker: threading.Thread) -> None:
+        """Draw until the worker ends, then until a key is pressed."""
+        self.s.timeout(150)
+        waiting = False
+        while True:
+            if not worker.is_alive() and not waiting:
+                waiting = True
+                curses.flushinp()
+            self._tick()
+            self.draw(waiting)
+            ch = self.s.getch()
+            if ch == 9:                                   # Tab
+                self.details = not self.details
+            elif ch == curses.KEY_RESIZE:
+                self.s.erase()
+            elif waiting and ch in (10, 13, curses.KEY_ENTER, 27, 32):
+                return
+
+    def _tick(self) -> None:
+        # Long downloads print nothing for a while; keep the bar alive
+        # without ever reaching the end of the phase on time alone.
+        with self.lock:
+            if self.phase >= 0 and not self.finished and time.time() - self.last_line_at > 2:
+                end = PHASES[self.phase][3]
+                self.pct = min(self.pct + 0.01, max(self.pct, end - 1))
+
+    def draw(self, waiting: bool) -> None:
+        s = self.s
+        s.erase()
+        h, w = s.getmaxyx()
+        with self.lock:
+            lines = list(self.lines)
+            pct, phase, failed, details = self.pct, self.phase, self.failed, self.details
+        left = max(1, (w - MEASURE) // 2)
+        accent = curses.color_pair(ACCENT)
+        dim = curses.color_pair(DIM) | curses.A_DIM
+
+        def put(y, x, text, attr=0):
+            if 0 <= y < h - 1 and x < w - 1:
+                try:
+                    s.addnstr(y, x, text, w - x - 1, attr)
+                except curses.error:
+                    pass
+
+        elapsed = int(time.time() - self.started)
+        clock = f"{elapsed // 60}:{elapsed % 60:02d}"
+
+        if details:
+            put(1, left, "LUNAR OS", accent | curses.A_BOLD)
+            put(1, left + MEASURE - len(clock), clock, dim)
+            put(2, left, "Installation output", dim)
+            rows = h - 6
+            for i, (text, acc) in enumerate(lines[-rows:]):
+                put(4 + i, left, text[:w - left - 2], accent if acc else curses.color_pair(DIM))
+            hint = "Tab  progress" + ("      Enter  continue" if waiting else "")
+            put(h - 2, left, hint, dim)
+            s.refresh()
+            return
+
+        # The logo when there is room for it, the name otherwise.
+        y = max(1, (h - 18) // 2)
+        if _utf8() and w >= len(LOGO[0]) + 4 and h >= 22:
+            lx = max(1, (w - len(LOGO[0])) // 2)
+            for i, row in enumerate(LOGO):
+                put(y + i, lx, row, accent | curses.A_BOLD)
+            y += len(LOGO) + 1
+        else:
+            put(y, (w - 8) // 2, "LUNAR OS", accent | curses.A_BOLD)
+            y += 2
+        put(y, max(1, (w - len(SLOGAN)) // 2), SLOGAN, dim)
+        y += 4
+
+        if failed:
+            label = "The installation did not finish"
+        elif phase >= 0:
+            label = PHASES[phase][1]
+        else:
+            label = "Getting ready"
+        if not waiting and not failed and phase < len(PHASES) - 1:
+            label += "." * (1 + int(time.time() * 2) % 3)
+        bar_w = min(MEASURE, w - 4) - 6
+        bx = max(1, (w - bar_w - 6) // 2)
+        put(y, bx, label, curses.A_BOLD | (curses.color_pair(WARN) if failed else 0))
+        y += 2
+        filled = int(bar_w * min(pct, 100) / 100)
+        full, empty = ("█", "░") if _utf8() else ("#", "-")
+        put(y, bx, full * filled, accent)
+        put(y, bx + filled, empty * (bar_w - filled), dim)
+        put(y, bx + bar_w + 1, f"{int(pct):3d}%", curses.A_BOLD)
+        y += 2
+        put(y, bx, f"{clock} elapsed", dim)
+        if waiting and not failed:
+            msg = "Remove the USB stick, then press Enter"
+            put(y + 2, max(1, (w - len(msg)) // 2), msg, accent | curses.A_BOLD)
+        hint = "Tab  show details" + ("      Enter  continue" if waiting else "")
+        put(h - 2, max(1, (w - len(hint)) // 2), hint, dim)
+        s.refresh()

@@ -23,3 +23,9 @@ done
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#5c6070'
 
 command -v starship >/dev/null && eval "$(starship init zsh)"
+
+# Developer conveniences
+export EDITOR=nvim VISUAL=nvim
+command -v fzf >/dev/null && source <(fzf --zsh 2>/dev/null)
+command -v direnv >/dev/null && eval "$(direnv hook zsh)"
+alias v=nvim lg=lazygit g=git
