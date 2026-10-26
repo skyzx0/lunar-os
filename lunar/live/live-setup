@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Turn the live ISO into a Lunar OS desktop you can try without installing.
+
+Runs once, from a pacman hook, inside the ISO's root while it is being built
+(after every package is in). It applies the same Lunar layer the installer
+applies to a real install - every desktop, the rice, Lunar Control, Lunar
+Look, the shell - minus the parts that only make sense on a disk: boot
+images, the boot loader, restore points, kernel parameters.
+
+User "lunar", password "lunar", logged in to Hyprland automatically. Log out
+to pick Plasma, GNOME, Sway or i3 at the login screen.
+"""
+import os
+import subprocess
+import sys
+
+MARK = "/var/lib/lunaros/live-setup-done"
+if os.path.exists(MARK):
+    sys.exit(0)
+sys.path.insert(0, "/usr/local/lib/lunaros-setup")
+from lunar_setup import archinstall_backend as b  # noqa: E402
+from lunar_setup.profiles import Config  # noqa: E402
+
+USER = "lunar"
+
+
+def sh(cmd):
+    r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+    if r.returncode:
+        print(f"lunar-live: (ignored) {cmd[:90]}: {r.stderr.strip()[:200]}", flush=True)
+
+
+sh(f"id {USER} || useradd -m -G wheel,video,audio,input -s /usr/bin/zsh {USER}")
+sh(f"echo '{USER}:{USER}' | chpasswd")
+sh(f"printf '{USER} ALL=(ALL) NOPASSWD: ALL\\n' > /etc/sudoers.d/10-lunar-live && chmod 440 /etc/sudoers.d/10-lunar-live")
+
+cfg = Config(username=USER, desktop="hyprland",
+             extra_desktops=["plasma", "gnome", "sway", "i3"],
+             profile="balanced", filesystem="ext4", dev=False, keymap="us")
+
+# Disk-only steps, and anything that would call pacman while pacman itself
+# is running this hook.
+SKIP = ("mkinitcpio", "/etc/kernel/cmdline", "loader.conf", "snapper", "pacman ",
+        "flatpak", "usbguard", "--install-time", "sddm/state.conf")
+cmds = [c for c in b.lunar_layer(cfg) if not any(s in c for s in SKIP)]
+print(f"lunar-live: applying {len(cmds)} Lunar OS steps", flush=True)
+for c in cmds:
+    sh(c)
+
+# The live system's own pieces.
+sh("systemctl disable systemd-networkd.service systemd-networkd.socket "
+   "systemd-networkd-wait-online.service iwd.service 2>/dev/null; true")
+sh("systemctl enable NetworkManager.service sddm.service bluetooth.service "
+   "power-profiles-daemon.service vboxservice.service 2>/dev/null; true")
+sh("systemctl set-default graphical.target")
+sh("rm -f /etc/systemd/system/getty@tty1.service.d/autologin.conf")
+os.makedirs("/etc/sddm.conf.d", exist_ok=True)
+with open("/etc/sddm.conf.d/20-lunar-live.conf", "w") as fh:
+    fh.write(f"[Autologin]\nUser={USER}\nSession=hyprland\nRelogin=false\n")
+# Wayland compositors in a virtual machine: software cursors avoid an
+# invisible or stuck pointer on VirtualBox and Hyper-V graphics.
+sh("printf 'WLR_NO_HARDWARE_CURSORS=1\\n' >> /etc/environment")
+sh(f"printf '\\ncursor {{\\n    no_hardware_cursors = 1\\n}}\\n' >> /home/{USER}/.config/hypr/hyprland.conf")
+sh(f"chown -R {USER}: /home/{USER}")
+
+os.makedirs(os.path.dirname(MARK), exist_ok=True)
+open(MARK, "w").close()
+print("lunar-live: done", flush=True)

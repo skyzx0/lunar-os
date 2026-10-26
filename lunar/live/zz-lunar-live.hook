@@ -1,0 +1,12 @@
+# Live edition only: applies the Lunar desktop layer once every package is
+# in. Named zz- so it runs after every other hook in the transaction.
+[Trigger]
+Operation = Install
+Type = Package
+Target = sddm
+
+[Action]
+Description = Setting up the Lunar OS live desktop...
+When = PostTransaction
+Depends = python
+Exec = /usr/bin/python3 /usr/local/lib/lunaros-setup/live-setup
