@@ -73,6 +73,9 @@ if [[ "${LUNAR_LIVE:-0}" == 1 ]]; then
     say "9. Live edition"
     sed -i -e 's|^iso_name=.*|iso_name="lunaros-live"|' \
            -e 's|^iso_application=.*|iso_application="Lunar OS Live"|' "$P/profiledef.sh"
+    # The desktop VirtualBox tools replace the text-only ones in the base
+    # profile; the two conflict, and a conflict stops the build.
+    sed -i '/^virtualbox-guest-utils-nox$/d' "$P/packages.x86_64"
     # Only names the repositories have: one unknown name fails the build.
     pacman -Sy >/dev/null 2>&1 || true
     while read -r pkg; do

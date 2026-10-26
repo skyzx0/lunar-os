@@ -1,16 +1,13 @@
 # Join the Lunar OS Live pieces into one ISO, using as little space as
-# possible: each piece is deleted as soon as it has been added. Also clears
-# out the older Lunar OS downloads to make room.
+# possible: each piece is deleted as soon as it has been added.
 $ErrorActionPreference = 'Stop'
 $dl = "$env:USERPROFILE\Downloads"
 $parts = "$dl\lunaros-live-parts"
 try {
-    Write-Host "Removing older Lunar OS downloads to free space..." -ForegroundColor Cyan
-    foreach ($old in @("$dl\lunaros-parts", "$dl\lunaros-2026.10.25-x86_64.iso", "$dl\lunar-os-step27.tar.gz")) {
-        if (Test-Path $old) { Remove-Item -Recurse -Force $old; Write-Host "  removed $old" }
-    }
-    $pieces = Get-ChildItem "$parts\live-*.bin" | Sort-Object Name
-    if (-not $pieces) { throw "No pieces found in $parts" }
+    # Nothing is deleted except the Live pieces themselves, one by one as
+    # they are joined. Your other ISOs are never touched.
+    $pieces = Get-ChildItem "$parts\live-*.bin" -ErrorAction SilentlyContinue | Sort-Object Name
+    if (-not $pieces) { throw "The Live ISO has not arrived yet - nothing was changed. Wait until Claude says it is ready." }
     $iso = "$dl\lunaros-live.iso"
     Write-Host "Joining $($pieces.Count) pieces into lunaros-live.iso..." -ForegroundColor Cyan
     $out = [IO.File]::Open($iso, 'Create', 'Write')

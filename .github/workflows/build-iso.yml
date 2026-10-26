@@ -39,11 +39,20 @@ jobs:
             set -euo pipefail
             pacman -Syu --noconfirm --needed archiso
             cp -r /usr/share/archiso/configs/releng /tmp/profile
-            bash lunar/apply.sh /tmp/profile
-            mkarchiso -v -w /tmp/work -o /src/out /tmp/profile
+            bash lunar/apply.sh /tmp/profile 2>&1 | tee /src/build.log
+            mkarchiso -v -w /tmp/work -o /src/out /tmp/profile 2>&1 | tee -a /src/build.log
           '
           sudo chown -R "$(id -u):$(id -g)" out
           ls -lh out
+
+      # The build log as a draft release, readable when the job log is not.
+      - name: Keep the log of a failed build
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tail -n 400 build.log > build-tail.log 2>/dev/null || echo "no log" > build-tail.log
+          gh release create "failed-$(date -u +%Y%m%d-%H%M)" build-tail.log --draft --title "Failed build log"
 
       - name: Checksum
         run: cd out && sha256sum *.iso > SHA256SUMS && cat SHA256SUMS
