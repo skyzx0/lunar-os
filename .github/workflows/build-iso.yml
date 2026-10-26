@@ -2,6 +2,12 @@ name: Build ISO
 
 on:
   workflow_dispatch:
+    inputs:
+      edition:
+        description: "installer (install to disk) or live (try every desktop, nothing installed)"
+        type: choice
+        options: [installer, live]
+        default: installer
 
 permissions:
   contents: write
@@ -18,10 +24,18 @@ jobs:
 
       # Arch's own releng profile, from the archiso package that builds it,
       # with lunar/apply.sh layered on top. Nothing else.
+      # The live edition carries every desktop; its build needs more room
+      # than the runner leaves free.
+      - name: Free disk space
+        if: inputs.edition == 'live'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost
+          df -h /
+
       - name: Build the ISO
         run: |
           mkdir -p out
-          docker run --rm --privileged -v "$PWD:/src" -w /src archlinux:latest bash -c '
+          docker run --rm --privileged -e LUNAR_LIVE=${{ inputs.edition == 'live' && '1' || '0' }} -v "$PWD:/src" -w /src archlinux:latest bash -c '
             set -euo pipefail
             pacman -Syu --noconfirm --needed archiso
             cp -r /usr/share/archiso/configs/releng /tmp/profile
@@ -38,7 +52,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="build-$(date -u +%Y%m%d-%H%M)"
-          gh release create "$tag" out/*.iso out/SHA256SUMS \
+          tag="${{ inputs.edition == 'live' && 'live' || 'build' }}-$(date -u +%Y%m%d-%H%M)"
+          # Release files must be under 2 GB: a larger ISO goes up in parts
+          # (join with: copy /b a+b on Windows, cat on Linux and macOS).
+          for f in out/*.iso; do
+            if [ "$(stat -c %s "$f")" -gt 2000000000 ]; then
+              split -b 1900M -d -a 1 "$f" "$f.part" && rm "$f"
+            fi
+          done
+          gh release create "$tag" out/*.iso* out/SHA256SUMS \
             --title "Lunar OS $tag" \
             --notes "Arch releng profile + Lunar OS branding + lunaros-setup."
