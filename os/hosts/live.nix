@@ -1,4 +1,3 @@
-# The USB stick: Lunar OS running live, with lunar-install to put it on a disk.
 { config, lib, pkgs, modulesPath, self, nixpkgs, ... }:
 let
   installed = self.nixosConfigurations.lunar.config.system.build.toplevel;
@@ -12,7 +11,6 @@ in
   ];
 
   lunar.live = true;
-  # Like any install medium: a root console, not a desktop.
   lunar.desktop = lib.mkForce "console";
   services.getty.autologinUser = lib.mkForce "root";
   users.users.root.shell = pkgs.zsh;

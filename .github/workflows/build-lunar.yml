@@ -1,8 +1,5 @@
 name: Build Lunar OS
 
-# Builds the Lunar OS USB image from os/. Almost everything arrives
-# ready-made, so this takes about 15-30 minutes.
-
 on:
   workflow_dispatch:
 
@@ -44,7 +41,6 @@ jobs:
           cd out
           sha256sum "$name" > SHA256SUMS
           ls -la
-          # GitHub takes files up to 2 GB; a bigger image goes up in parts.
           if [ "$(stat -c %s "$name")" -gt 2000000000 ]; then
             split -b 1900M -d -a 1 "$name" "$name.part"
             rm "$name"

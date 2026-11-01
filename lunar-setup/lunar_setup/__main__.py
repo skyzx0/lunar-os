@@ -128,8 +128,6 @@ def wizard(stdscr) -> Config:
     cfg.encrypt = i == 0
 
     if not cfg.encrypt:
-        # Not a scare screen: a plain statement of what is being given up, once,
-        # so the choice is informed rather than a default someone clicked past.
         ok = s.confirm("No encryption", step=step(4),
             body="Without encryption, anyone who takes this machine or removes "
                  "the drive can read every file on it: documents, saved "
@@ -201,8 +199,6 @@ def wizard(stdscr) -> Config:
     cfg.desktop = DESKTOPS[i].key
     cfg.extra_desktops = []
 
-    # More desktops alongside the main one: each becomes a session to pick at
-    # the login screen. The main desktop decides which login screen it is.
     while cfg.desktop != "minimal":
         chosen = cfg.all_desktops()
         others = [d for d in DESKTOPS if d.key not in chosen and d.key != "minimal"]
@@ -218,7 +214,6 @@ def wizard(stdscr) -> Config:
             break
         cfg.extra_desktops.append(others[j - 1].key)
 
-    # Hyprland's look: Lunar's own, from packages, or illogical-impulse.
     if "hyprland" in cfg.all_desktops():
         j = s.menu("Hyprland look", [
             ("Lunar (recommended)", "Glass bar, launcher, notification centre and lock "
@@ -451,8 +446,6 @@ def main() -> int:
     ap.add_argument("--memory", action="store_true",
                     help="report current memory use, for checking idle claims")
     args = ap.parse_args()
-    # Box and block characters in the logo and the progress bar need the
-    # console's UTF-8 locale; curses uses the C locale otherwise.
     try:
         locale.setlocale(locale.LC_ALL, "")
     except locale.Error:
@@ -460,7 +453,6 @@ def main() -> int:
     global ENGINE
     ENGINE = args.engine
 
-    # These two are read-only and useful without privileges.
     if args.last_log:
         for path in (LOG_PATH, "/root/lunar-setup.log", "/lunar-setup.log"):
             try:
@@ -494,16 +486,12 @@ def main() -> int:
 
     if args.unattended:
         raw = json.load(open(args.unattended))
-        # Ignore keys this version does not know about rather than failing on
-        # an answer file written for a different one.
         known = {f for f in vars(Config()).keys()}
         unknown = set(raw) - known
         if unknown:
             print(f"ignoring unknown settings: {' '.join(sorted(unknown))}")
         cfg = Config(**{k: v for k, v in raw.items() if k in known})
 
-        # The same transcript an interactive install writes, so an unattended
-        # failure can be read afterwards.
         with open(LOG_PATH, "w", buffering=1) as log_file:
             def emit(line: str, accent: bool = False) -> None:
                 print(line, flush=True)
@@ -531,15 +519,10 @@ def main() -> int:
     ok = curses.wrapper(run_install, cfg)
 
     if not ok:
-        # curses has released the terminal by now, so this stays on screen
-        # instead of being wiped when the wizard exits. The failure used to be
-        # drawn inside the curses window and vanished on the next keypress,
-        # which made every failure impossible to report.
         show_failure()
         return 1
 
     os.makedirs("/mnt/etc/lunar", exist_ok=True)
-    # Secrets never touch the installed system's config.
     saved = {k: v for k, v in vars(cfg).items()
              if k not in ("luks_passphrase", "user_password")}
     with open("/mnt/etc/lunar/setup.json", "w") as fh:

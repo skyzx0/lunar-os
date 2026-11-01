@@ -37,8 +37,6 @@ ARCHINSTALL_LOG = "/var/log/archinstall/install.log"
 # what archinstall should install
 
 
-# archinstall profile names for each Lunar desktop. "Minimal" installs nothing
-# graphical; the Lunar metapackage then brings in the pieces we actually want.
 PROFILE_FOR = {
     "plasma":   {"main": "Desktop", "details": ["KDE Plasma"], "greeter": "sddm"},
     "gnome":    {"main": "Desktop", "details": ["GNOME"],      "greeter": "gdm"},
@@ -59,11 +57,6 @@ def lunar_packages(cfg: Config) -> list:
     return pkgs
 
 
-# archinstall's desktop profiles install the bare minimum: Plasma gets only
-# plasma-desktop (no network applet, no battery or power management, no
-# volume control, no Bluetooth), i3 gets xterm, and none of the tiling
-# desktops get a way to pick a Wi-Fi network. These fill that in.
-
 # Every graphical desktop.
 DESKTOP_COMMON = [
     "firefox",
@@ -75,17 +68,10 @@ DESKTOP_COMMON = [
     "grim", "imagemagick", "xorg-server-xephyr", "foot",  # lunar-test screenshots
 ]
 
-# Per desktop, on top of the above and archinstall's own selection.
 DESKTOP_EXTRAS = {
-    # plasma-meta is the full Plasma: network applet (plasma-nm), battery
-    # and power (powerdevil), volume (plasma-pa), Bluetooth (bluedevil),
-    # display settings (kscreen), themes for GTK apps. Then the usual apps.
     "plasma": ["plasma-meta", "kvantum", "konsole", "dolphin", "kate", "ark",
                "spectacle", "gwenview", "okular", "kcalc", "filelight"],
-    # The gnome group is already complete; power profiles come from above.
     "gnome": [],
-    # Lunar's own Hyprland: every piece from the official repositories, so
-    # an update never needs anything built from source.
     "hyprland": ["waybar", "hyprlock", "hypridle", "network-manager-applet",
                  "blueman", "pavucontrol", "brightnessctl", "swaybg", "btop", "cava",
                  "rofi", "swaync", "cliphist", "wl-clipboard", "hyprpicker",
@@ -148,9 +134,6 @@ def available_packages(pkgs: list, emit=None) -> list:
     return keep
 
 
-# Every install. Stability first: tools that keep the system healthy on
-# their own (mirror refresh, package cache trimming, firmware updates),
-# then encryption, then a comfortable shell.
 STABILITY = ["reflector", "pacman-contrib", "fwupd", "flatpak", "man-db",
              "man-pages", "bash-completion", "rsync", "unzip", "7zip", "wget",
              "git", "sof-firmware"]
@@ -161,9 +144,6 @@ SHELL = ["zsh-completions", "zsh-autosuggestions", "zsh-syntax-highlighting",
          "starship", "eza", "bat", "fzf", "zoxide", "ripgrep", "fd"]
 
 
-# Developer tools: languages, build tools, debuggers, Git tooling, and
-# containers that need no root and no daemon (podman, also answering to
-# "docker"; distrobox for other distributions).
 DEV = ["base-devel", "git", "github-cli", "git-delta", "lazygit", "neovim", "tmux",
        "direnv", "jq", "yq", "httpie", "python", "python-pip", "python-pipx", "uv",
        "nodejs", "npm", "pnpm", "go", "rustup", "clang", "cmake", "ninja", "meson",
@@ -178,7 +158,6 @@ def extra_packages(cfg: Config) -> list:
             "zram-generator", "sudo", "fastfetch"]
     pkgs += STABILITY + ENCRYPTION + SHELL
     if cfg.filesystem == "btrfs":
-        # Restore points before and after every install, removal and update.
         pkgs += ["btrfs-progs", "snapper", "snap-pac"]
     if graphical(cfg):
         pkgs += ENCRYPTION_GUI
@@ -257,7 +236,6 @@ def disk_config(cfg: Config, size_bytes: int = None) -> dict:
         "dev_path": None,
         "flags": [],
         "fs_type": fs,
-        # noatime: reading a file never writes to the disk.
         "mount_options": ["compress=zstd:1", "noatime"] if fs == "btrfs" else ["noatime"],
         "mountpoint": None if fs == "btrfs" else "/",
         "obj_id": root_id,
@@ -375,12 +353,10 @@ def user_files_cmds(cfg: Config, files: list) -> list:
         home = f"/home/{cfg.username}"
         for _, rel in files:
             cmds.append(f"install -Dm644 /etc/skel/{rel} {home}/{rel}")
-        # The home folder was created moments ago and holds only these.
         cmds.append(f"chown -R {cfg.username}: {home}")
     return cmds
 
 
-# Each tiling desktop's own configs: (bundled file, path in the home folder).
 _GTK_DARK = [("desktops/common/gtk-settings.ini", ".config/gtk-3.0/settings.ini"),
              ("desktops/common/gtk-settings.ini", ".config/gtk-4.0/settings.ini")]
 DESKTOP_USER_FILES = {
@@ -415,7 +391,6 @@ DESKTOP_USER_FILES = {
     ] + _GTK_DARK,
 }
 
-# Every install, desktop or not: the shell and its prompt.
 SHELL_USER_FILES = [
     ("shell/zshrc", ".zshrc"),
     ("shell/starship.toml", ".config/starship.toml"),
@@ -430,8 +405,6 @@ def kernel_hardening(cfg: Config) -> list:
     right for the layout it created.
     """
     p = cfg.profile_obj()
-    # Balanced: only what costs nothing and breaks nothing on any laptop.
-    # zswap off because zram already compresses memory; both at once waste it.
     params = [
         "init_on_alloc=1", "page_alloc.shuffle=1", "randomize_kstack_offset=on",
         "vsyscall=none", "debugfs=off", "zswap.enabled=0",
@@ -459,18 +432,13 @@ def lunar_layer(cfg: Config) -> list:
     """
     p = cfg.profile_obj()
     cmds = [
-        # Identity: the OS name every tool reads, the login banner, and the
-        # package command. Shared with the live ISO (lunar_setup/assets).
         write_asset_cmd("os-release", "/usr/lib/os-release"),
         write_asset_cmd("issue", "/etc/issue"),
         write_asset_cmd("ltxs", "/usr/local/bin/ltxs", "755"),
 
-        # Keep a package update from restoring the vendor os-release.
         "grep -q '^NoUpgrade.*os-release' /etc/pacman.conf || "
         "sed -i '/^\\[options\\]/a NoUpgrade = usr/lib/os-release' /etc/pacman.conf",
 
-        # systemd-firstboot takes the console on first boot and asks for
-        # things this installer already set. Masked, it cannot appear.
         "systemctl mask systemd-firstboot.service",
 
         # Services the hardening depends on.
@@ -478,68 +446,44 @@ def lunar_layer(cfg: Config) -> list:
     ]
 
 
-    # The hardening itself: sysctl, the module blacklist, the firewall,
-    # encrypted DNS, private Wi-Fi addresses, login limits, the out-of-memory
-    # guard. Written as drop-in files, none of which can touch how the disk
-    # is found or unlocked.
     for path, (content, mode) in hardening.safe_files(cfg).items():
         cmds.append(write_bytes_cmd(content.lstrip("\n").encode(), path, mode))
     cmds += [
         "mkdir -p /etc/nftables.d",
         write_asset_cmd("net/lunar-dns", "/usr/local/bin/lunar-dns", "755"),
-        # Encrypted DNS, the out-of-memory guard, and the maintenance timers:
-        # TRIM for the SSD weekly, fresh download servers weekly, old
-        # downloads trimmed to the last three versions weekly.
         "systemctl enable systemd-resolved.service systemd-oomd.service fstrim.timer || true",
         write_asset_cmd("stability/reflector.conf", "/etc/xdg/reflector/reflector.conf"),
         "systemctl enable reflector.timer || true",
         "systemctl enable paccache.timer || true",
         "systemctl enable fwupd-refresh.timer 2>/dev/null || true",
-        # Readable package output; and a first update that does not list
-        # every notice ever published.
         "sed -i 's/^#Color/Color/; s/^#VerbosePkgLists/VerbosePkgLists/' /etc/pacman.conf",
         "mkdir -p /var/lib/lunaros && date +%s > /var/lib/lunaros/last-update",
-        # Faster networking and room for file watchers.
         write_asset_cmd("stability/performance.conf", "/etc/sysctl.d/90-lunar-performance.conf"),
-        # Boot does not wait for the network: the desktop is up while Wi-Fi
-        # connects, as on a phone.
         "systemctl disable NetworkManager-wait-online.service >/dev/null 2>&1 || true",
     ]
     if cfg.dev:
         cmds += [
             write_asset_cmd("dev/lunar-dev", "/usr/local/bin/lunar-dev", "755"),
             write_asset_cmd("dev/gitconfig", "/etc/gitconfig"),
-            # delta as Git's pager only when it is there: a missing pager
-            # would break git log and git diff.
             "command -v delta >/dev/null && cat >> /etc/gitconfig <<'EOF'\n"
             + open(os.path.join(ASSETS, "dev/gitconfig-delta")).read() + "EOF\ntrue",
             write_asset_cmd("dev/makepkg.conf", "/etc/makepkg.conf.d/lunar.conf"),
             write_asset_cmd("dev/registries.conf", "/etc/containers/registries.conf.d/10-lunar.conf"),
         ]
         if cfg.username:
-            # Rootless containers need a range of user IDs of their own.
             u = cfg.username
             cmds.append(f"grep -q '^{u}:' /etc/subuid 2>/dev/null || "
                         f"usermod --add-subuids 100000-165535 --add-subgids 100000-165535 {u} || true")
     if p.usbguard:
-        # Trust exactly what is plugged in now. USBGuard without a policy
-        # blocks every USB device, keyboards and mice included.
         cmds.append("usbguard generate-policy > /etc/usbguard/rules.conf 2>/dev/null && "
                     "chmod 600 /etc/usbguard/rules.conf || true")
     if graphical(cfg):
         cmds += [
-            # Firefox: HTTPS only, tracker and fingerprinting protection,
-            # no telemetry, uBlock Origin. All changeable in its settings.
             write_asset_cmd("firefox/policies.json", "/etc/firefox/policies/policies.json"),
-            # Desktop apps from Flathub, sandboxed: ltxs app install NAME
             "flatpak remote-add --if-not-exists flathub "
             "https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true",
         ]
 
-    # Kernel hardening parameters are *appended* to the command line
-    # archinstall wrote, never substituted for it. archinstall puts the
-    # parameters that unlock an encrypted disk and find the root filesystem
-    # in that file; replacing it produces a system that cannot boot.
     params = " ".join(kernel_hardening(cfg))
     cmds.append(
         "if [ -f /etc/kernel/cmdline ]; then "
@@ -549,16 +493,6 @@ def lunar_layer(cfg: Config) -> list:
         "done; fi")
 
 
-    # The X11 side of the keyboard layout. archinstall's own installer can
-    # propagate this live via a temporary systemd-nspawn boot of the target,
-    # but that needs a real container-boot stack this build environment does
-    # not have, and - unlike everything else in this list - degrades badly
-    # rather than gracefully: it produces gigabytes of boot console output
-    # before failing. The console side is unaffected either way; archinstall
-    # writes /etc/vconsole.conf directly, unconditionally, before that step
-    # ever runs.
-    # X11 names its layouts differently from the console (uk -> gb), and has
-    # separate variants (de nodeadkeys); the keymap table maps between them.
     xkb_layout, xkb_variant = x11_for(cfg.keymap)
     variant_line = (f"        Option \"XkbVariant\" \"{xkb_variant}\"\n"
                     if xkb_variant else "")
@@ -572,23 +506,15 @@ def lunar_layer(cfg: Config) -> list:
         f"        Option \"AutoRepeat\" \"250 50\"\n"
         f"EndSection\n' > /etc/X11/xorg.conf.d/00-keyboard.conf")
 
-    # fastfetch with the half moon, system-wide (a user's own
-    # ~/.config/fastfetch/config.jsonc still takes precedence); neofetch,
-    # which Arch no longer carries, runs it too.
     cmds += [
         write_asset_cmd("fetch/logo.txt", "/usr/share/lunaros/fetch-logo.txt"),
         write_asset_cmd("fetch/config.jsonc", "/etc/xdg/fastfetch/config.jsonc"),
         write_asset_cmd("fetch/neofetch", "/usr/local/bin/neofetch", "755"),
     ]
 
-    # Power profiles and Bluetooth on any graphical desktop. Tolerant of a
-    # missing unit: a package skipped above should cost that feature only.
     if graphical(cfg):
         cmds.append("systemctl enable power-profiles-daemon.service bluetooth.service || true")
 
-    # Every install: pacman goes through ltxs in a terminal, and the Lunar
-    # icon that os-release names (LOGO=lunar) exists, so "About this
-    # system" screens show the moon.
     cmds += [
         write_asset_cmd("shell/lunar-shell.sh", "/etc/lunaros/shell.sh"),
         "grep -q /etc/lunaros/shell.sh /etc/bash.bashrc 2>/dev/null || "
@@ -599,12 +525,10 @@ def lunar_layer(cfg: Config) -> list:
         write_asset_cmd("plasma/lunar-logo.svg", "/usr/share/pixmaps/lunar.svg"),
     ]
 
-    # The moon wallpaper, for every graphical desktop.
     if graphical(cfg):
         cmds.append(write_asset_cmd("plasma/lunar-wallpaper.png",
                                     "/usr/share/wallpapers/Lunar/contents/images/3840x2160.png"))
 
-    # Lunar Look: one settings app for the look of every desktop.
     if graphical(cfg):
         cmds += [
             write_asset_cmd("look/lunar-look", "/usr/local/bin/lunar-look", "755"),
@@ -612,27 +536,20 @@ def lunar_layer(cfg: Config) -> list:
             write_asset_cmd("look/look.json", "/etc/lunaros/look.json"),
             write_asset_cmd("look/lunar-look.desktop", "/usr/share/applications/lunar-look.desktop"),
             write_asset_cmd("test/lunar-test", "/usr/local/bin/lunar-test", "755"),
-            # Lunar Control: Wi-Fi, Bluetooth, sound, display, power, system.
             write_asset_cmd("control/lunar-control", "/usr/local/bin/lunar-control", "755"),
             write_asset_cmd("control/lunar-control.desktop",
                             "/usr/share/applications/lunar-control.desktop"),
             write_asset_cmd("test/lunar-test.desktop", "/usr/share/applications/lunar-test.desktop"),
         ]
 
-    # Hyprland: the power menu, and lunar-ii, which installs the
-    # experimental illogical-impulse look on request.
     if "hyprland" in cfg.all_desktops():
         cmds += [
             write_asset_cmd("desktops/hyprland/lunar-power", "/usr/local/bin/lunar-power", "755"),
             write_asset_cmd("ii/lunar-ii", "/usr/local/bin/lunar-ii", "755"),
             write_asset_cmd("ii/lunar-ii.desktop", "/usr/share/applications/lunar-ii.desktop"),
-            # Two notification services fight over the same name; swaync is
-            # Lunar's. archinstall's Hyprland selection brings dunst.
             "pacman -Rns --noconfirm dunst >/dev/null 2>&1 || true",
         ]
 
-    # GNOME: dark, the moon, a Lunar dock - as system defaults, so anything
-    # changed in Settings overrides them.
     if "gnome" in cfg.all_desktops():
         cmds += [
             write_asset_cmd("desktops/gnome/dconf-profile-user", "/etc/dconf/profile/user"),
@@ -640,22 +557,17 @@ def lunar_layer(cfg: Config) -> list:
             "dconf update || true",
         ]
 
-    # Hyprland, Sway, i3: their whole look lives in the user's config files.
     files = list(dict.fromkeys(SHELL_USER_FILES + [f for d in cfg.all_desktops()
                                                    for f in DESKTOP_USER_FILES.get(d, [])]))
     cmds += user_files_cmds(cfg, files)
     if cfg.username:
         cmds.append(f"chsh -s /usr/bin/zsh {cfg.username} >/dev/null || true")
-    # The login screen starts on Hyprland when it is the main desktop.
     if cfg.desktop == "hyprland" and greeter_for(cfg) == "sddm":
         cmds.append(
             "[ -d /var/lib/sddm ] && [ -f /usr/share/wayland-sessions/hyprland.desktop ] && "
             f"printf '[Last]\\nSession=/usr/share/wayland-sessions/hyprland.desktop\\nUser={cfg.username}\\n' "
             "> /var/lib/sddm/state.conf && chown sddm:sddm /var/lib/sddm/state.conf; true")
     if graphical(cfg) and cfg.username:
-        # Generate the user's Lunar Look files now, as that user. Hyprland and
-        # foot refuse a missing included file, so they get an empty one if the
-        # run fails for any reason - the defaults in the main configs still hold.
         u, home = cfg.username, f"/home/{cfg.username}"
         cmds.append(
             f"runuser -u {u} -- env HOME={home} /usr/local/bin/lunar-look apply --no-reload || true; "
@@ -665,9 +577,6 @@ def lunar_layer(cfg: Config) -> list:
         cmds.append(write_asset_cmd("desktops/common/lightdm-gtk-greeter.conf",
                                     "/etc/lightdm/lightdm-gtk-greeter.conf"))
 
-    # Plasma: black, see-through, the moon as wallpaper and at login. These
-    # are defaults; lunar-plasma-setup applies them once at first login and
-    # everything stays changeable in System Settings.
     if "plasma" in cfg.all_desktops():
         cmds += [
             write_asset_cmd("plasma/Lunar.colors", "/usr/share/color-schemes/Lunar.colors"),
@@ -687,25 +596,14 @@ def lunar_layer(cfg: Config) -> list:
                             "/usr/share/sddm/themes/breeze/theme.conf.user"),
         ]
 
-    # Hyprland: illogical-impulse, installed now and themed as Lunar. It runs
-    # as the user (its installer refuses root) and never fails the Lunar
-    # installation: on any problem Lunar's own Hyprland setup stays and the
-    # first login offers it again. Log: /var/log/lunaros-ii-install.log
     if "hyprland" in cfg.all_desktops() and cfg.username and cfg.rice == "ii":
         cmds.append(f"/usr/local/bin/lunar-ii --install-time {cfg.username} || true")
 
-    # Boot splash: the half moon, name and slogan on black while the system
-    # starts, and the passphrase prompt when the disk is encrypted. Needs the
-    # theme, the plymouth hook in the boot image, and "splash" on the kernel
-    # command line; the rebuild below then includes all three.
     theme = "/usr/share/plymouth/themes/lunar"
     cmds += [
         *[write_asset_cmd(f"plymouth/{f}", f"{theme}/{f}")
           for f in sorted(os.listdir(os.path.join(ASSETS, "plymouth")))],
         "plymouth-set-default-theme lunar || true",
-        # After systemd or udev, whichever archinstall chose, so it starts
-        # before the encryption prompt. Only if the hook is actually there:
-        # naming a missing hook would make the boot-image rebuild fail.
         "if [ -f /usr/lib/initcpio/install/plymouth ]; then "
         "sed -i -E '/^HOOKS=/{/[( ]plymouth[ )]/!s/([( ])(systemd|udev)([ )])/\\1\\2 plymouth\\3/}' "
         "/etc/mkinitcpio.conf; fi",
@@ -713,35 +611,19 @@ def lunar_layer(cfg: Config) -> list:
         "for p in quiet splash loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0; do "
         "grep -qw \"$p\" /etc/kernel/cmdline || sed -i \"s|\\$| $p|\" /etc/kernel/cmdline; "
         "done; fi",
-        # Straight to the splash: the boot menu stays hidden unless a key is
-        # held while starting (Space), instead of 15 seconds of text.
         "for f in /boot/loader/loader.conf /efi/loader/loader.conf; do "
         "[ -f \"$f\" ] && sed -i 's/^timeout.*/timeout 0/' \"$f\"; done; true",
     ]
 
-    # Nothing between the firmware logo and the splash. Arch's kernel presets
-    # carry a --splash option pointing at Arch's logo, and archinstall turns
-    # it on when it sets up UKIs, so every boot flashed that logo. Removed:
-    # the screen stays black until the moon starts waxing.
     cmds.append(
         "sed -i -E 's#[[:space:]]*--splash[= ]/usr/share/systemd/bootctl/splash-arch\\.bmp##' "
         "/etc/mkinitcpio.d/*.preset 2>/dev/null; true")
 
 
-    # Rebuild the boot images last. archinstall built them before any of the
-    # above ran, so they still carry Arch's os-release: the boot menu title
-    # and the "Welcome to ..." line both come from it. A failure here is
-    # reported but does not abort - the system still boots, with the old
-    # names - since archinstall treats any failed command as a failed install.
     cmds.append(
         "mkinitcpio -P || echo 'lunaros-setup: rebuilding the boot images "
         "failed; the boot menu may still show the old name' >&2")
 
-    # Restore points (btrfs). archinstall's own snapper option would create
-    # /.snapshots as a nested subvolume, which collides with the @snapshots
-    # subvolume mounted there; so the configuration is written the way
-    # snapper's create-config would, minus that step (ArchWiki, Snapper).
-    # Last of all, so the first restore point is the finished install.
     if cfg.filesystem == "btrfs":
         conf = "/etc/snapper/configs/root"
         sets = {"SUBVOLUME": "/", "FSTYPE": "btrfs", "ALLOW_GROUPS": "wheel",
@@ -787,10 +669,6 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
     profile = {"main": main["main"], "details": list(dict.fromkeys(details)), "greeter": greeter_for(cfg)}
     p = cfg.profile_obj()
 
-    # The first kernel is the one the computer starts. Long-term support
-    # unless a hardened profile was chosen: it only gets fixes, never a new
-    # kernel series, so an update cannot bring a new driver regression. The
-    # second stays installed as a fallback in the boot menu (hold Space).
     kernels = ["linux-hardened", "linux-lts"] if p.hardened_kernel else ["linux-lts", "linux"]
     if cfg.fast:
         kernels = kernels[:1]
@@ -802,8 +680,6 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
         "custom_repositories": [],
     }
     if lunar_packages(cfg):
-        # Lunar's packages, from the medium. TrustAll because an unsigned
-        # build has no key to check against; a signed one sets its own level.
         mirror["custom_repositories"].append({
             "name": "lunar",
             "url": f"file://{MEDIUM_REPO}",
@@ -816,8 +692,6 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
         "audio_config": {"audio": "pipewire"},
         "bootloader_config": {
             "bootloader": "Systemd-boot",
-            # Unified kernel images: kernel, initramfs and command line in one
-            # signed binary. The whole boot chain Secure Boot can verify.
             "uki": True,
             "removable": False,
         },
@@ -835,20 +709,8 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
         "network_config": {"type": "nm"},
         "no_pkg_lookups": False,
         "ntp": True,
-        # True unconditionally. This only skips archinstall's own network
-        # conveniences - a wifi prompt, a version check, and fetching Arch's
-        # mirror-status JSON to re-rank mirrors - none of which the install
-        # depends on: connectivity is checked before this runs (see
-        # require_network in install(), reused from the older engine), and
-        # the mirrorlist is already ranked by ensure_mirrors(). Left False,
-        # a later step calls `systemctl show` to wait on reflector.service,
-        # which needs a running systemd talking to dbus. A live medium has
-        # that; a container building and testing the image does not, and
-        # archinstall does not fail gracefully when it is missing.
         "offline": True,
         "packages": extra_packages(cfg),
-        # Top level: archinstall 4 ignores it under pacman_config and
-        # silently downloads one package at a time.
         "parallel_downloads": 8,
         "profile_config": {
             "gfx_driver": "All open-source",
@@ -856,8 +718,6 @@ def build_config(cfg: Config, size_bytes: int = None) -> dict:
             "profile": {"main": profile["main"], "details": profile["details"]},
         },
         "script": "guided",
-        # Enabled by archinstall itself rather than by a custom command, so a
-        # missing unit is reported rather than silently skipped.
         "services": enabled_services(cfg),
         "silent": True,
         "swap": {"enabled": True, "algorithm": "zstd"},
@@ -954,10 +814,6 @@ def install(cfg: Config, emit) -> None:
             "  It is the installation engine; the medium cannot install\n"
             "  without it.")
 
-    # Checked here rather than left to archinstall's own online check, which
-    # the offline=True setting above disables. Before anything destructive:
-    # finding out there is no network after the disk has been erased leaves a
-    # machine that neither boots its old system nor has a new one.
     from .install import require_network, ensure_mirrors
     emit("Checking the connection", accent=True)
     require_network(log=emit)
@@ -980,25 +836,10 @@ def install(cfg: Config, emit) -> None:
         conf = build_config(cfg)
         conf["packages"] = config_packages      # the checked list, not the raw one
         json.dump(conf, fh, indent=2)
-    # Credentials are readable by root only, and removed afterwards.
     fd = os.open(creds_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         json.dump(build_credentials(cfg), fh, indent=2)
 
-    # archinstall's own console-keyboard step can try to live-propagate the
-    # X11 side by booting the target with systemd-nspawn - a real container
-    # boot, which a build environment has no working stack for. Unlike the
-    # dbus-only calls fixed above, that one does not fail cleanly: it reads
-    # a boot console in a loop, so the failure is gigabytes of output rather
-    # than a clean error. The console side is unaffected: archinstall's
-    # set_vconsole() writes /etc/vconsole.conf from the same value directly,
-    # unconditionally, before this method ever runs. The X11 side is set
-    # directly in the Lunar layer above instead of through this mechanism.
-    #
-    # archinstall runs as a separate process, so this cannot be patched from
-    # here directly; a tiny wrapper does the patch and then runs archinstall
-    # itself, in the same process, so the patch applies before anything else
-    # imports or calls it.
     wrapper_path = os.path.join(workdir, "run_archinstall.py")
     with open(wrapper_path, "w") as fh:
         fh.write(WRAPPER_SOURCE)
@@ -1010,28 +851,8 @@ def install(cfg: Config, emit) -> None:
 
     cmd = ["python3", wrapper_path, "--config", config_path, "--creds", creds_path,
            "--silent",
-           # All three wait on a running systemd talking to dbus - present on
-           # a real live medium, absent inside a build container. None of
-           # them affect the installed system; they only pause the installer
-           # until the live session's own clock, keyring sync and reflector
-           # run have settled.
-           #
-           # --offline has to be a command-line flag, not only the "offline"
-           # key already set in the JSON config above. archinstall reads
-           # this particular gate from args.offline - the argparse namespace
-           # built from the CLI - never from the parsed config object, so the
-           # JSON key alone does nothing here. Confirmed by grepping
-           # archinstall's own source for anywhere it reads the config
-           # object's offline field for this check: nowhere does.
            "--offline", "--skip-ntp", "--skip-wkd"]
 
-    # Output streamed, stdin fed from `yes`: the same two properties that the
-    # hand-written engine needed and got wrong for weeks. archinstall is
-    # non-interactive with --silent, so this is a safety net, not a crutch.
-    # A package download can fail partway (a mirror drops out or lags behind):
-    # pacstrap then aborts before anything is installed. That is retried from
-    # the start with freshly ranked mirrors, up to three times in all. Any
-    # other failure is reported straight away.
     for attempt in range(1, 4):
         rc, download_failed = run_archinstall(cmd, emit)
         if rc == 0 or not download_failed or attempt == 3:
@@ -1040,8 +861,6 @@ def install(cfg: Config, emit) -> None:
         emit(f"A package download failed. Retrying with other mirrors ({attempt + 1} of 3).", accent=True)
         subprocess.run(["umount", "-R", "/mnt"], capture_output=True)
         subprocess.run(["swapoff", "-a"], capture_output=True)
-        # An encrypted install leaves its LUKS container open; archinstall
-        # cannot re-partition the disk until it is closed.
         crypt = subprocess.run(["lsblk", "-nrpo", "NAME,TYPE", cfg.disk],
                                capture_output=True, text=True).stdout
         for row in crypt.splitlines():

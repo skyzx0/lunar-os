@@ -1,10 +1,5 @@
 name: Quick build Lunar OS Core
 
-# A new Lunar OS Core image in about 5-10 minutes: the last full build's
-# programs and kernel, with the current Lunar files (rice, configs,
-# installer, ltxs and its recipes, scripts) put in. Nothing is compiled.
-# Changes to packages, the kernel or core/package need the full build.
-
 on:
   workflow_dispatch:
 

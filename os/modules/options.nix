@@ -1,4 +1,3 @@
-# What one Lunar OS install is made of. Set from /etc/lunar/system.conf.
 { lib, ... }:
 let
   inherit (lib) mkOption types;

@@ -1,5 +1,3 @@
-# Lunar OS everywhere a name or version is shown: os-release, boot menu,
-# login, the boot splash.
 { config, lib, pkgs, ... }:
 let
   ver = config.lunar.version;

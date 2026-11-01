@@ -90,11 +90,6 @@ class SecurityProfile:
 
 
 PROFILES = [
-    # The default. Everything that protects data without ever getting in the
-    # way: full-disk encryption, encrypted DNS, AppArmor, a default-deny
-    # firewall, MAC randomisation, kernel and network hardening that no
-    # hardware or app depends on. The long-term-support kernel, so an update
-    # never brings a new kernel series with it.
     SecurityProfile(
         key="balanced",
         name="Balanced (recommended)",
@@ -167,13 +162,9 @@ class Config:
     locale: str = "en_US.UTF-8"
     keymap: str = "us"
     desktop: str = "hyprland"
-    # More desktops installed alongside the main one; pick one at login.
     extra_desktops: list = field(default_factory=list)
     profile: str = "balanced"
-    # Hyprland's look: "lunar" (Lunar's own, built from packages, stable) or
-    # "ii" (illogical-impulse, built from source at install time, experimental).
     rice: str = "lunar"
-    # Compilers, editors, containers and Git tooling (see DEV in the backend).
     dev: bool = True
     encrypt: bool = True              # LUKS2 full-disk encryption
     fast: bool = False                # minimal console system, fastest install

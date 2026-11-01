@@ -20,7 +20,6 @@
     {
       overlays.default = overlay;
 
-      # Installed on a disk (lunar-install, then ltxs, use this one).
       nixosConfigurations.lunar = lunarSystem [ ./hosts/installed.nix ];
       # The USB stick.
       nixosConfigurations.live = lunarSystem [ ./hosts/live.nix ];

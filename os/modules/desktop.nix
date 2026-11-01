@@ -1,10 +1,6 @@
-# The Lunar desktop: Hyprland with Lunar's own bar, launcher, notifications,
-# lock screen and terminal, signed in through a Lunar login screen.
 { config, lib, pkgs, ... }:
 let
   cfg = config.lunar;
-  # The desktop's default settings, with this computer's keyboard filled in.
-  # lunar-session copies them into ~/.config on first sign-in.
   skel = pkgs.runCommand "lunar-skel" { } ''
     cp -r ${pkgs.lunar.assets}/skel $out
     chmod -R u+w $out

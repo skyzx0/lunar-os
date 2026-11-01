@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
-# Turn Arch's official releng profile into Lunar OS.
-#
-#   lunar/apply.sh <profile-dir>
-#
-# Everything here is a small, separate change on top of the unmodified
-# upstream profile. Add new changes as new numbered steps, one at a time,
-# so a broken build always points at the last step added.
 set -euo pipefail
 
 P="$1"
@@ -15,7 +8,6 @@ ASSETS="$REPO/lunar-setup/lunar_setup/assets"
 A="$P/airootfs"
 say() { printf ':: %s\n' "$*"; }
 
-# 1. ISO identity: filename, volume label, publisher.
 say "1. ISO identity"
 sed -i \
     -e 's|^iso_name=.*|iso_name="lunaros"|' \
@@ -24,20 +16,16 @@ sed -i \
     -e 's|^iso_application=.*|iso_application="Lunar OS Live/Rescue"|' \
     "$P/profiledef.sh"
 
-# 2. Boot menu titles (UEFI systemd-boot, GRUB, BIOS syslinux).
 say "2. Boot menu titles"
 sed -i 's/Arch Linux/Lunar OS/g' \
     "$P"/efiboot/loader/entries/*.conf \
     "$P"/grub/*.cfg \
     "$P"/syslinux/*.cfg
 
-# 3. Hostname and welcome message on the live system.
 say "3. Hostname and welcome message"
 echo "lunaros" > "$A/etc/hostname"
 cp "$HERE/motd" "$A/etc/motd"
 
-# 4. OS name in os-release and the login banner. The hook is numbered 10-
-#    so it runs before the boot image is built from os-release.
 say "4. OS name"
 install -Dm644 "$ASSETS/os-release" "$A/usr/share/lunaros/os-release"
 install -Dm644 "$ASSETS/issue" "$A/usr/share/lunaros/issue"
@@ -50,7 +38,6 @@ cp -r "$REPO/lunar-setup/lunar_setup" "$A/usr/local/lib/lunaros-setup/"
 install -Dm755 "$HERE/lunaros-setup" "$A/usr/local/bin/lunaros-setup"
 sed -i 's|^file_permissions=(|file_permissions=(\n  ["/usr/local/bin/lunaros-setup"]="0:0:755"|' "$P/profiledef.sh"
 
-# 6. BIOS boot menu background (Arch's logo otherwise).
 say "6. Boot menu background"
 cp "$HERE/splash.png" "$P/syslinux/splash.png"
 
@@ -59,24 +46,15 @@ say "7. ltxs"
 install -Dm755 "$ASSETS/ltxs" "$A/usr/local/bin/ltxs"
 sed -i 's|^file_permissions=(|file_permissions=(\n  ["/usr/local/bin/ltxs"]="0:0:755"|' "$P/profiledef.sh"
 
-# 8. A larger, sharper console font: the logo and the installer's progress
-#    bar are drawn with box and block characters, which Terminus has, and
-#    the default 8x16 font is tiny on a high-resolution laptop screen.
 say "8. Console font"
 grep -qx terminus-font "$P/packages.x86_64" || echo terminus-font >> "$P/packages.x86_64"
 printf 'KEYMAP=us\nFONT=ter-v22b\n' > "$A/etc/vconsole.conf"
 
-# 9. Live edition (LUNAR_LIVE=1): boots straight into the Lunar desktops,
-#    nothing installed, to try every desktop from the ISO alone - for
-#    example in a virtual machine with no virtual disk at all.
 if [[ "${LUNAR_LIVE:-0}" == 1 ]]; then
     say "9. Live edition"
     sed -i -e 's|^iso_name=.*|iso_name="lunaros-live"|' \
            -e 's|^iso_application=.*|iso_application="Lunar OS Live"|' "$P/profiledef.sh"
-    # The desktop VirtualBox tools replace the text-only ones in the base
-    # profile; the two conflict, and a conflict stops the build.
     sed -i '/^virtualbox-guest-utils-nox$/d' "$P/packages.x86_64"
-    # Only names the repositories have: one unknown name fails the build.
     pacman -Sy >/dev/null 2>&1 || true
     while read -r pkg; do
         [[ -z "$pkg" ]] && continue
@@ -88,14 +66,10 @@ if [[ "${LUNAR_LIVE:-0}" == 1 ]]; then
     done < "$HERE/live/packages.live"
     install -Dm755 "$HERE/live/live-setup" "$A/usr/local/lib/lunaros-setup/live-setup"
     install -Dm644 "$HERE/live/zz-lunar-live.hook" "$A/etc/pacman.d/hooks/zz-lunar-live.hook"
-    # Run from the ISO rather than copying it into memory, and give the live
-    # system room to write (the default is 256 MB, which a desktop outgrows
-    # in minutes). tmpfs only takes the memory actually written.
     sed -i 's|archisobasedir=%INSTALL_DIR%|& copytoram=n cow_spacesize=3G|' \
         "$P"/efiboot/loader/entries/*.conf "$P"/grub/*.cfg "$P"/syslinux/*.cfg
     sed -i 's/Lunar OS install medium/Lunar OS Live/; s/Lunar OS (x86_64/Lunar OS Live (x86_64/' \
         "$P"/efiboot/loader/entries/*.conf "$P"/grub/*.cfg "$P"/syslinux/*.cfg 2>/dev/null || true
-    # Faster to build and to start than xz, a little larger.
     sed -i "s|^airootfs_image_tool_options=.*|airootfs_image_tool_options=('-comp' 'zstd' '-Xcompression-level' '15' '-b' '1M')|" "$P/profiledef.sh"
 fi
 

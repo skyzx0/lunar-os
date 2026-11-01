@@ -43,9 +43,6 @@ def kernel_cmdline(profile, luks_uuid: str) -> str:
         "rw",
         "quiet",
         "splash",
-        # A serial console costs nothing on hardware that has no serial port,
-        # and it is the only way an automated test can see whether the
-        # installed system actually boots.
         "console=tty0",
         "console=ttyS0,115200",
         "loglevel=3",
@@ -57,30 +54,19 @@ def kernel_cmdline(profile, luks_uuid: str) -> str:
         "slab_nomerge",
         "randomize_kstack_offset=on",
         "vsyscall=none",
-        # speculative execution: do not let the kernel trade safety for speed
         "spectre_v2=on",
         "spec_store_bypass_disable=on",
         "l1tf=full,force",
         "tsx=off",
-        # DMA and firmware. iommu=force is deliberately absent: it prevents
-        # some machines from booting at all, and the isolation it adds over
-        # the per-vendor options below is small.
         "intel_iommu=on",
         "amd_iommu=on",
         "efi=disable_early_pci_dma",
         "debugfs=off",
     ]
 
-    # Refusing unsigned modules also refuses every out-of-tree driver: NVIDIA,
-    # Broadcom wireless, VirtualBox. On the stricter profiles that is the
-    # intended trade; on the others it would silently cost people their
-    # graphics or their wireless.
     if profile.lockdown == "confidentiality":
         parts.append("module.sig_enforce=1")
 
-    # nosmt disables hyperthreading, which roughly halves throughput on
-    # multithreaded work. It closes real cross-thread attacks and is worth it
-    # when that is your threat model, and not otherwise.
     if profile.lockdown == "confidentiality":
         parts += ["mitigations=auto,nosmt", "mds=full,nosmt",
                   "tsx_async_abort=full,nosmt"]
@@ -162,7 +148,6 @@ def blacklist(profile=None) -> str:
         "dccp", "sctp", "rds", "tipc", "n-hdlc", "ax25", "netrom", "x25",
         "rose", "decnet", "econet", "af_802154", "ipx", "appletalk", "psnap",
         "p8023", "p8022", "can", "atm",
-        # rare filesystems that are historically CVE farms
         "cramfs", "freevxfs", "jffs2", "hfs", "hfsplus", "squashfs", "udf",
         "cifs", "nfs", "nfsv3", "nfsv4", "ksmbd", "gfs2",
         # thunderbolt / firewire DMA
@@ -358,7 +343,6 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 """
     return {
-        # NetworkManager needs to write its state and talk to netlink.
         "NetworkManager": common + """
 ReadWritePaths=/etc/NetworkManager /var/lib/NetworkManager /run
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
@@ -456,9 +440,6 @@ def oomd_slice() -> str:
 
 
 def oomd_user() -> str:
-    # The way Fedora ships it: a session whose memory pressure stays above
-    # half for a while loses its largest app, instead of the whole computer
-    # freezing until the kernel finally acts.
     return "[Service]\nManagedOOMMemoryPressure=kill\nManagedOOMMemoryPressureLimit=50%\n"
 
 
@@ -480,16 +461,12 @@ def safe_files(cfg) -> dict:
         "/etc/modprobe.d/lunar-blacklist.conf": (blacklist(p), "644"),
         "/etc/nftables.conf": (nftables(p), "600"),
         "/etc/systemd/resolved.conf.d/lunar.conf": (resolved_conf(p), "644"),
-        # NetworkManager hands its DNS servers to resolved, and every program
-        # asks resolved. /etc/resolv.conf becomes the link at boot: inside
-        # the installer's chroot it is the installer's own file, mounted over.
         "/etc/NetworkManager/conf.d/10-lunar-dns.conf": ("[main]\ndns=systemd-resolved\n", "644"),
         "/etc/tmpfiles.d/lunar-resolv.conf":
             ("L+ /etc/resolv.conf - - - - ../run/systemd/resolve/stub-resolv.conf\n", "644"),
         "/etc/security/faillock.conf": (pam_faillock(), "644"),
         "/etc/systemd/system/-.slice.d/10-lunar-oomd.conf": (oomd_slice(), "644"),
         "/etc/systemd/system/user@.service.d/10-lunar-oomd.conf": (oomd_user(), "644"),
-        # /dev/shm is writable by everyone; nothing needs to run code from it.
         "/etc/tmpfiles.d/lunar-shm.conf": ("d /dev/shm 1777 root root -\n", "644"),
     }
     if nm := networkmanager_privacy(p, getattr(cfg, "spoof_network", False)):
@@ -516,8 +493,6 @@ def apply(cfg, luks_part_uuid: str, log=None) -> None:
     if p.auditd:
         write("/etc/audit/rules.d/lunar.rules", audit_rules(p), mode=0o600, log=log)
 
-    # su should not be available to accounts that are not administrators;
-    # sudo with its logging and timeouts is the supported path.
     write("/etc/pam.d/su", """
 auth       sufficient pam_rootok.so
 auth       required   pam_wheel.so use_uid
@@ -526,16 +501,9 @@ account    required   pam_unix.so
 session    required   pam_unix.so
 """, log=log)
 
-    # /dev/shm is writable by every user and is a standard staging ground for
-    # payloads. It has no legitimate need to be executable.
     write("/etc/tmpfiles.d/lunar-shm.conf", "d /dev/shm 1777 root root -\n", log=log)
 
-    # A stable machine-id is a durable cross-boot identifier that leaks in DHCP
-    # and in some telemetry. Regenerate it per boot on the anonymity profile.
     if p.tor_transparent:
-        # "uninitialized" makes systemd regenerate the id each boot, which is
-        # the point. It also satisfies the condition systemd-firstboot waits
-        # on, so that unit must stay masked or it will prompt on every boot.
         write("/etc/machine-id", "uninitialized\n", log=log)
         chroot("systemctl mask systemd-firstboot.service", check=False, log=log)
     write("/etc/modprobe.d/lunar-blacklist.conf", blacklist(p), log=log)
@@ -549,14 +517,11 @@ session    required   pam_unix.so
     if nm := networkmanager_privacy(p, getattr(cfg, "spoof_network", False)):
         write("/etc/NetworkManager/conf.d/99-lunar-privacy.conf", nm, log=log)
 
-    # umask 077 for every login shell and systemd user unit
     write("/etc/profile.d/lunar-umask.sh", "umask 077\n", mode=0o755, log=log)
     chroot("sed -i 's/^UMASK.*/UMASK 077/' /etc/login.defs", log=log)
     chroot("sed -i 's/^HOME_MODE.*/HOME_MODE 0700/' /etc/login.defs", check=False, log=log)
 
     if p.hardened_malloc:
-        # A missing library in ld.so.preload breaks every binary on the system,
-        # including the ones needed to undo it. Only wire it up if it is there.
         lib = os.path.join(ROOT, "usr/lib/libhardened_malloc.so")
         if os.path.exists(lib):
             write("/etc/ld.so.preload", "/usr/lib/libhardened_malloc.so\n", log=log)
@@ -577,7 +542,6 @@ session    required   pam_unix.so
         chroot(f"systemctl enable {svc}", check=False, log=log)
 
     if p.usbguard:
-        # Trust exactly what is plugged in right now, reject everything after.
         chroot("usbguard generate-policy > /etc/usbguard/rules.conf "
                "&& chmod 600 /etc/usbguard/rules.conf", check=False, log=log)
 
@@ -603,7 +567,6 @@ table inet lunar-tor {
 }
 """, log=log)
 
-    # AppArmor: cache profiles so boot is not slowed by parsing
     if p.apparmor:
         chroot("aa-teardown 2>/dev/null; apparmor_parser -Q /etc/apparmor.d/ "
                "|| true", check=False, log=log)

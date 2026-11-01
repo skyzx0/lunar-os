@@ -1,16 +1,4 @@
 #!/bin/bash
-# quick-rebuild.sh - a new Lunar OS Core image in minutes, without compiling.
-#
-# Takes the last full build's image and puts the current Lunar files into it:
-# everything under core/board/lunar/overlay (the desktop rice, configs,
-# lunar-install, ltxs, its app recipes, scripts) plus what post-build.sh does
-# to them. Programs and the kernel stay as they were in that build.
-#
-# For changes to the package list, the kernel or anything in core/package,
-# a full build is still needed (Build Lunar OS Core).
-#
-#   sudo core/quick-rebuild.sh OLD.img.gz VERSION OUT.img.gz
-
 set -euo pipefail
 OLD=$1 VERSION=$2 OUT=$3
 HERE=$(cd "$(dirname "$0")" && pwd)

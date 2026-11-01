@@ -55,8 +55,6 @@ def run(cmd, check=True, input_=None, log=None, timeout=None):
                            stdin=None if input_ is not None else subprocess.DEVNULL,
                            text=True, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        # With stdin closed a prompt cannot hang us, but a device that stops
-        # responding still can. Report it rather than sitting there.
         raise CommandFailed(cmd, -1,
                             f"timed out after {timeout}s with no output") from None
     if r.returncode != 0:
@@ -122,15 +120,10 @@ def release_disk(disk: str, log=None) -> None:
     """
     base = os.path.basename(disk)
 
-    # Swap on the target keeps its logical volume open.
     run(["swapoff", "-a"], check=False, log=log)
 
-    # An earlier run may have left the new root mounted.
     subprocess.run(["umount", "-R", "/mnt"], capture_output=True, text=True)
 
-    # Deactivate volume groups whose physical volumes live on this disk. Only
-    # this disk: deactivating everything would take out the running system if
-    # the installer is ever run from an installed one.
     pvs = subprocess.run(["pvs", "--noheadings", "-o", "pv_name,vg_name"],
                          capture_output=True, text=True).stdout
     for line in pvs.splitlines():
@@ -140,8 +133,6 @@ def release_disk(disk: str, log=None) -> None:
                 log(f"  releasing volume group {fields[1]}")
             run(["vgchange", "-an", fields[1]], check=False, log=log)
 
-    # Close device-mapper devices stacked on this disk: LUKS containers from
-    # a previous encrypted attempt, and any leftover LVM mappings.
     for entry in sorted(glob.glob(f"/sys/class/block/{base}*")):
         holders = os.path.join(entry, "holders")
         if not os.path.isdir(holders):
@@ -213,11 +204,6 @@ def partition(disk: str, log=None) -> tuple:
             "  Reboot the live medium and try again; something outside the\n"
             "  installer is holding the disk.")
 
-    # Signatures live inside the partitions, and sgdisk only rewrites the
-    # table. Clear them while the partitions still exist: once the table is
-    # replaced, udev sees the same old LVM metadata in the new partition,
-    # autoactivates the volume group, and the device is busy before anything
-    # here gets a chance to touch it.
     for part in existing_partitions(disk):
         run(["wipefs", "-a", part], check=False, log=log)
 
@@ -233,16 +219,11 @@ def partition(disk: str, log=None) -> tuple:
     suffix = "p" if disk[-1].isdigit() else ""
     esp, data = f"{disk}{suffix}1", f"{disk}{suffix}2"
 
-    # udev may have autoactivated something off the new partitions in the
-    # moment between creating them and wiping them.
     release_disk(disk, log=log)
 
     for part in (esp, data):
         run(["wipefs", "-a", part], check=False, log=log)
 
-    # LVM headers sit in the first megabytes and survive a wipefs that was
-    # blocked. Zeroing the start is decisive, cheap, and means the next tool
-    # finds nothing to ask about.
     run(["dd", "if=/dev/zero", f"of={data}", "bs=1M", "count=16",
          "conv=fsync"], check=False, log=log)
     run(["udevadm", "settle"], check=False, log=log)
@@ -298,9 +279,6 @@ def make_volumes(filesystem: str, log=None, target: str = None) -> None:
 
     run(["pvcreate", "-ff", "-y", target], log=log)
     run(["vgcreate", "-y", VG, target], log=log)
-    # -y answers the "wipe the signature I found?" prompt that a previous
-    # attempt's filesystem leaves behind. -Zy zeroes the start of the volume
-    # so the next tool does not find that signature either.
     run(["lvcreate", "-y", "-Zy", "-W", "y", "-L", f"{swap_gib}G",
          "-n", "swap", VG], log=log)
     run(["lvcreate", "-y", "-Zy", "-W", "y", "-l", "100%FREE",
@@ -334,25 +312,16 @@ def make_volumes(filesystem: str, log=None, target: str = None) -> None:
 
 
 def mount_esp(esp: str, log=None) -> None:
-    # udev has to catch up with the new partition table before the device node
-    # is reliably usable; without this the mkfs can succeed and the mount that
-    # follows it fail on the same path.
     run(["udevadm", "settle"], check=False, log=log)
-    # mount normally auto-loads the driver, but not on every kernel and not
-    # when the module is built as one that autoload does not cover.
     run(["modprobe", "vfat"], check=False, log=log)
     run(["mkfs.fat", "-F32", "-n", "LUNARESP", esp], log=log)
     run(["udevadm", "settle"], check=False, log=log)
     run(["mkdir", "-p", "/mnt/efi"], log=log)
 
-    # -t vfat explicitly: autodetection reads the superblock, and on a
-    # just-created filesystem the kernel may still have the old one cached.
     opts = "umask=0077,nodev,nosuid,noexec"
     r = run(["mount", "-t", "vfat", "-o", opts, esp, "/mnt/efi"],
             check=False, log=log)
     if r.returncode != 0:
-        # Some firmware-written ESPs reject noexec. Losing it is a small
-        # hardening loss and better than an install that cannot finish.
         if log:
             log("    retrying without noexec")
         r = run(["mount", "-t", "vfat", "-o", "umask=0077,nodev,nosuid",

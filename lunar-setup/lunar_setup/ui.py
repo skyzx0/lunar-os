@@ -227,8 +227,6 @@ LOGO = [
 ]
 SLOGAN = "See what's on the other side of the moon"
 
-# What the installer is doing, recognised from its own output. Each phase
-# owns a stretch of the bar; the bar only ever moves forward.
 PHASES = [
     (("checking the connection",), "Checking the connection", 0, 3),
     (("checking the package list",), "Checking packages", 3, 6),
@@ -273,8 +271,6 @@ class InstallProgress:
         self.finished = False
         self.failed = False
 
-    # ---- fed from the worker thread ----------------------------------------
-
     def feed(self, line: str, accent: bool = False) -> None:
         low = line.lower()
         with self.lock:
@@ -310,8 +306,6 @@ class InstallProgress:
             else:
                 self.details = True
 
-    # ---- the main thread ---------------------------------------------------
-
     def run(self, worker: threading.Thread) -> None:
         """Draw until the worker ends, then until a key is pressed."""
         self.s.timeout(150)
@@ -331,8 +325,6 @@ class InstallProgress:
                 return
 
     def _tick(self) -> None:
-        # Long downloads print nothing for a while; keep the bar alive
-        # without ever reaching the end of the phase on time alone.
         with self.lock:
             if self.phase >= 0 and not self.finished and time.time() - self.last_line_at > 2:
                 end = PHASES[self.phase][3]
@@ -371,7 +363,6 @@ class InstallProgress:
             s.refresh()
             return
 
-        # The logo when there is room for it, the name otherwise.
         y = max(1, (h - 18) // 2)
         if _utf8() and w >= len(LOGO[0]) + 4 and h >= 22:
             lx = max(1, (w - len(LOGO[0])) // 2)

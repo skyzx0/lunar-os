@@ -1,12 +1,9 @@
-# The base system: users, networking, sound, Bluetooth, fonts, the engine.
 { config, lib, pkgs, nixpkgs, ... }:
 let
   cfg = config.lunar;
   apps = map (n: lib.attrByPath (lib.splitString "." n)
     (throw "system.conf: [apps] has \"${n}\", which is not an app (try: ltxs search ${n})") pkgs) cfg.apps;
 
-  # The engine's own commands stay usable for Lunar's tools, but typed at a
-  # prompt they answer like any command that isn't there.
   hidden = [
     "nix" "nix-env" "nix-shell" "nix-build" "nix-store" "nix-instantiate" "nix-channel"
     "nix-collect-garbage" "nix-copy-closure" "nix-daemon" "nix-hash" "nix-prefetch-url"
@@ -43,7 +40,6 @@ in
     ${c}() { _lunar_missing ${c}; }
   '') hidden;
 
-  # Passwords are set with `passwd` (lunarstrap asks for the first one).
   users.mutableUsers = true;
   users.users.${cfg.user.name} = {
     isNormalUser = true;

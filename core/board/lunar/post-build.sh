@@ -1,5 +1,4 @@
 #!/bin/sh
-# Runs after the overlay is copied into the target, before the image.
 set -e
 BOARD_DIR=$(dirname "$0")
 
@@ -12,15 +11,12 @@ chmod 0440 "$TARGET_DIR/etc/sudoers.d/wheel"
 grep -q '^@includedir /etc/sudoers.d' "$TARGET_DIR/etc/sudoers" ||
     echo '@includedir /etc/sudoers.d' >> "$TARGET_DIR/etc/sudoers"
 
-# Which build this is (ltxs update compares it with the newest release).
 sed -i '/^IMAGE_VERSION=/d' "$TARGET_DIR/usr/lib/os-release"
 echo "IMAGE_VERSION=${LUNAR_VERSION:-dev}" >> "$TARGET_DIR/usr/lib/os-release"
 
-# The USB stick is the live system until lunar-install copies it to a disk.
 touch "$TARGET_DIR/etc/lunar-live"
 mkdir -p "$TARGET_DIR/boot/efi"
 
-# Services: Wi-Fi, wired DHCP, DNS, clock, seat fallback.
 wants="$TARGET_DIR/etc/systemd/system/multi-user.target.wants"
 mkdir -p "$wants"
 for unit in iwd systemd-networkd systemd-resolved systemd-timesyncd seatd bluetooth; do
@@ -30,7 +26,6 @@ for unit in iwd systemd-networkd systemd-resolved systemd-timesyncd seatd blueto
 done
 ln -sf ../run/systemd/resolve/stub-resolv.conf "$TARGET_DIR/etc/resolv.conf"
 
-# Sound for every user session: PipeWire, its PulseAudio side, WirePlumber.
 uw="$TARGET_DIR/etc/systemd/user"
 for s in pipewire.socket pipewire-pulse.socket; do
     [ -f "$TARGET_DIR/usr/lib/systemd/user/$s" ] || continue

@@ -10,16 +10,11 @@ from .profiles import DESKTOPS
 ROOT = "/mnt"
 
 BASE = [
-    # base-devel is a build toolchain: several hundred megabytes that a
-    # normal install never uses. Install it with ltxs when needed.
     "base", "linux-firmware", "intel-ucode", "amd-ucode",
     "lvm2", "cryptsetup", "btrfs-progs", "e2fsprogs", "dosfstools",
     "networkmanager", "nftables", "systemd-resolvconf",
     "sudo", "zsh", "vim", "git", "man-db", "pacman-contrib", "reflector",
     "zram-generator",
-    # lunar-keyring deliberately absent: it only exists in signed builds, and
-    # resolve_packages() would drop it anyway. Listing it here made every
-    # unsigned install fail on a package that was never built.
     "lunar-hardening", "lunar-setup", "lunar-branding", "lunar-cli",
     "plymouth",
 ]
@@ -31,9 +26,6 @@ SECURITY = [
     "torsocks", "macchanger", "polkit",
 ]
 
-# In the AUR, so pacstrap cannot install them. Left to the user post-install
-# with an AUR helper; the hardening code degrades gracefully when they are
-# absent rather than leaving a system that will not boot.
 AUR_SUGGESTED = ["hardened_malloc", "opensnitch"]
 
 
@@ -47,15 +39,10 @@ def run(cmd, log=None, check=True, input_=None):
 
 def kernel_packages(profile) -> list:
     if profile.hardened_kernel:
-        # linux-lts is the fallback: linux-hardened has broken on new laptops
-        # more than once, and an unbootable machine is not a secure machine.
         return ["linux-hardened", "linux-hardened-headers", "linux-lts"]
     return ["linux", "linux-headers", "linux-lts"]
 
 
-# The smallest set that boots, decrypts, reaches the network and can install
-# anything else. Everything beyond this is a choice the user can make later
-# with ltxs, which is the point: a fast install is a small install.
 FAST_BASE = [
     "base", "linux-hardened", "linux-firmware", "intel-ucode", "amd-ucode",
     "lvm2", "cryptsetup", "btrfs-progs", "dosfstools",
@@ -84,10 +71,6 @@ def _full_package_set(cfg) -> list:
     return sorted(set(pkgs))
 
 
-# Official geo-routed mirror first, then per-continent fallbacks. Used when
-# mirror ranking fails or produces nothing: an empty mirrorlist makes pacstrap
-# fail with "no servers configured for repository", which names the symptom
-# and not the cause.
 FALLBACK_MIRRORS = [
     "https://geo.mirror.pkgbuild.com/$repo/os/$arch",
     "https://europe.mirror.pkgbuild.com/$repo/os/$arch",
@@ -287,9 +270,6 @@ Include = /etc/pacman.d/mirrorlist
 """, log=log)
 
 
-# Without these the installed system does not boot, decrypt or reach a
-# network. If one of them is unavailable the install must stop; everything
-# else is desirable rather than essential.
 REQUIRED = {
     "base", "linux-hardened", "linux", "linux-firmware", "systemd",
     "lvm2", "cryptsetup", "networkmanager", "sudo",
@@ -391,11 +371,6 @@ def run_pacstrap(conf: str, pkgs: list, log=None, timeout: int = 3600) -> int:
     if log:
         log(f"  $ pacstrap -K -C {conf} {ROOT} ({len(pkgs)} packages)")
 
-    # stdin is fed from `yes` rather than closed. Closing it stops the hang
-    # but turns any prompt into an abort; feeding it means a question about
-    # which provider to use, or whether to replace a package, is answered and
-    # the install continues. Both beat waiting forever on a question nobody
-    # can see, which is what an inherited terminal produced.
     yes_proc = subprocess.Popen(["yes"], stdout=subprocess.PIPE)
 
     proc = subprocess.Popen(
@@ -416,8 +391,6 @@ def run_pacstrap(conf: str, pkgs: list, log=None, timeout: int = 3600) -> int:
             line = line.rstrip()
             if not line:
                 continue
-            # Download progress redraws the same line hundreds of times; keep
-            # the transcript readable by dropping consecutive duplicates.
             if line == last:
                 continue
             last = line
@@ -440,9 +413,6 @@ def install(cfg, emit) -> None:
     log = emit
     p = cfg.profile_obj()
 
-    # Checked before anything destructive. Finding out there is no network
-    # after the disk has been erased leaves a machine that neither boots its
-    # old system nor has a new one.
     log("Checking the connection", accent=True)
     require_network(log=log)
     log("  mirrors reachable")
@@ -467,10 +437,8 @@ def install(cfg, emit) -> None:
         disk.make_volumes(cfg.filesystem, log=log, target=luks_part)
         uuid = ""
     disk.mount_esp(esp, log=log)
-    # Our own volumes are up now; let LVM manage devices normally again.
     disk.resume_autoactivation(log=log)
 
-    # ---- base system ---------------------------------------------------
     ensure_mirrors(log=log)
 
     log("Installing packages", accent=True)
@@ -493,17 +461,10 @@ def install(cfg, emit) -> None:
     with open(f"{ROOT}/etc/fstab", "a") as fh:
         fh.write(subprocess.run(["genfstab", "-U", ROOT],
                                 capture_output=True, text=True, check=True).stdout)
-    # tmpfs with noexec for /tmp and a real size cap
     with open(f"{ROOT}/etc/fstab", "a") as fh:
         fh.write("tmpfs /tmp tmpfs rw,nosuid,nodev,noexec,size=2G,mode=1777 0 0\n")
-        # No /proc entry: systemd mounts it before fstab is read, and an
-        # entry here that the kernel or systemd disagrees with drops the
-        # machine into emergency mode at boot. Process hiding is applied per
-        # service with ProtectProc instead, which cannot break booting.
-        # /dev/shm is world-writable and a standard place to stage a payload.
         fh.write("tmpfs /dev/shm tmpfs rw,nosuid,nodev,noexec 0 0\n")
 
-    # ---- locale, time, identity ----------------------------------------
     log("Configuring the system", accent=True)
     chroot(f"ln -sf /usr/share/zoneinfo/{cfg.timezone} /etc/localtime && hwclock --systohc",
            log=log)
@@ -512,22 +473,12 @@ def install(cfg, emit) -> None:
     hardening.write("/etc/vconsole.conf", f"KEYMAP={cfg.keymap}\n", log=log)
     hardening.write("/etc/hostname", cfg.hostname + "\n", log=log)
 
-    # systemd decides a system has "never booted" when /etc/machine-id is
-    # absent, and then systemd-firstboot takes the console and asks for a
-    # timezone, locale and root password before anything else can run. The
-    # installer has already been told all of that, so answer it here and
-    # generate the machine id; then mask the unit so it cannot appear later.
     chroot(f"systemd-firstboot --locale='{cfg.locale}' "
            f"--keymap='{cfg.keymap}' --timezone='{cfg.timezone}' "
            f"--hostname='{cfg.hostname}' --setup-machine-id",
            check=False, log=log)
     chroot("systemctl mask systemd-firstboot.service", check=False, log=log)
 
-    # Brand the installed system. os-release is what neofetch, GRUB, systemd,
-    # bug trackers and half the desktop read to name the distribution; leaving
-    # it saying "Arch Linux" would be the single most visible wrong thing.
-    # It lives in /usr/lib and is symlinked from /etc, and the arch package
-    # owns it, so the file is replaced and pacman is told to leave it alone.
     hardening.write("/usr/lib/os-release", """
 NAME="Lunar OS"
 PRETTY_NAME="Lunar OS"
@@ -561,9 +512,6 @@ DISTRIB_DESCRIPTION="Lunar OS"
 
     # ---- users ---------------------------------------------------------
     create_user(cfg, log=log)
-    # Passed on stdin, never interpolated into a shell command: a password
-    # containing a quote or a backtick would otherwise break the command or
-    # have part of itself executed, and would be visible in the process list.
     set_password(cfg.username, cfg.user_password, log=log)
     if cfg.root_locked:
         chroot("passwd -l root", log=log)
@@ -581,11 +529,8 @@ Defaults !targetpw
     log("Applying the " + p.name + " profile", accent=True)
     hardening.apply(cfg, uuid, log=log)
 
-    # ---- network privacy toggles ---------------------------------------
     if cfg.spoof_network:
         log("Enabling network spoofing at boot", accent=True)
-        # A boot-time oneshot rather than baked config, so it can be turned
-        # off later with 'lunar-privacy spoof off' without editing files.
         hardening.write("/etc/systemd/system/lunar-spoof.service", """
 [Unit]
 Description=Lunar network spoofing
@@ -606,7 +551,6 @@ WantedBy=multi-user.target
         log("Enabling cover traffic", accent=True)
         chroot("lunar-privacy cover on --rate low", check=False, log=log)
 
-    # ---- initramfs + unified kernel image -------------------------------
     log("Building the unified kernel image", accent=True)
     hardening.write("/etc/mkinitcpio.conf.d/lunar.conf", """
 # plymouth-encrypt belongs to the busybox 'encrypt' hook and conflicts with
@@ -634,9 +578,6 @@ default_uki="/efi/EFI/Linux/lunar-{k}.efi"
 # No vendor splash bitmap: the boot splash is Plymouth's.
 default_options=""
 """, log=log)
-    # mkinitcpio writes the unified kernel image straight into the ESP, and
-    # bootctl - which creates that directory - has not run yet. Without this
-    # the image generation fails on a missing path.
     chroot("mkdir -p /efi/EFI/Linux /efi/EFI/BOOT", log=log)
     chroot("mkinitcpio -P", log=log)
 
@@ -672,13 +613,10 @@ editor no
         if r.returncode != 0:
             log("  No usable TPM2 found. Passphrase unlock stays as the only method.")
 
-    # ---- display manager and appearance ---------------------------------
     d = cfg.desktop_obj()
     if d.dm:
         chroot(f"systemctl enable {d.dm}", check=False, log=log)
 
-    # greetd drives the tiling sessions, which have no display manager of
-    # their own. Point tuigreet at the chosen session's launch command.
     if d.dm == "greetd":
         session_cmd = {"hyprland": "Hyprland", "sway": "sway",
                        "i3": "i3"}.get(d.key, d.session)
@@ -706,9 +644,6 @@ DisplayServer=wayland
 """, log=log)
 
     if d.key == "plasma":
-        # Plasma reads this once, when a session first starts without an
-        # existing configuration. Copied per-user rather than enforced, so
-        # anything the user changes afterwards stays changed.
         chroot(f"install -Dm644 -o {cfg.username} -g {cfg.username} "
                "/usr/share/lunar/layout/org.lunaros.desktop.js "
                f"/home/{cfg.username}/.config/plasma-org.kde.plasma.desktop-layout.js",

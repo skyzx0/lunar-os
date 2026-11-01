@@ -132,8 +132,6 @@ LOCALES = [
     ("C.UTF-8",     "None (C.UTF-8)"),
 ]
 
-# Common zones first, since most installs are one of these; the full IANA
-# database is still accepted by typing a name.
 TIMEZONES = [
     "Europe/Vienna", "Europe/Berlin", "Europe/Zurich", "Europe/London",
     "Europe/Paris", "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam",

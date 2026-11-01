@@ -1,5 +1,3 @@
-# Turns /etc/lunar/system.conf into the system. ltxs copies it here
-# (host/system.conf) before applying.
 { config, lib, ... }:
 let
   conf = import ../lib/conf.nix { inherit lib; file = ../host/system.conf; };

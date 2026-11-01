@@ -22,10 +22,6 @@ jobs:
       - name: Check the installer compiles
         run: python3 -m compileall -q lunar-setup/lunar_setup
 
-      # Arch's own releng profile, from the archiso package that builds it,
-      # with lunar/apply.sh layered on top. Nothing else.
-      # The live edition carries every desktop; its build needs more room
-      # than the runner leaves free.
       - name: Free disk space
         if: inputs.edition == 'live'
         run: |
@@ -45,7 +41,6 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" out
           ls -lh out
 
-      # The build log as a draft release, readable when the job log is not.
       - name: Keep the log of a failed build
         if: failure()
         env:
@@ -62,8 +57,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ inputs.edition == 'live' && 'live' || 'build' }}-$(date -u +%Y%m%d-%H%M)"
-          # Release files must be under 2 GB: a larger ISO goes up in parts
-          # (join with: copy /b a+b on Windows, cat on Linux and macOS).
           for f in out/*.iso; do
             if [ "$(stat -c %s "$f")" -gt 2000000000 ]; then
               split -b 1900M -d -a 1 "$f" "$f.part" && rm "$f"

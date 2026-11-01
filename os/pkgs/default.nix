@@ -1,4 +1,3 @@
-# Lunar OS's own packages, available as pkgs.lunar.* everywhere in the system.
 final: prev:
 let
   assets = ../assets;
@@ -13,7 +12,6 @@ let
 in
 {
   lunar = {
-    # Wallpaper, logos, the boot splash, the desktop's default settings.
     assets = final.runCommand "lunar-assets" { } ''
       mkdir -p $out
       cp -r ${assets}/. $out/
@@ -29,7 +27,6 @@ in
 
     ltxs = script "ltxs" (with final; [ jq gnused gnugrep coreutils ]);
 
-    # Installing: the guided installer and the manual tools it is built on.
     lunar-tools = final.symlinkJoin {
       name = "lunar-tools";
       paths = map (n: script n (with final; [
@@ -44,7 +41,6 @@ in
       exec ${final.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1
     '';
 
-    # Lunar Look: one settings app for colours, transparency and wallpaper.
     lunar-look =
       let
         py = final.python3.withPackages (p: [ p.pygobject3 ]);
@@ -67,8 +63,6 @@ in
             > $out/share/applications/lunar-look.desktop
         '';
         dontWrapGApps = true;
-        # The wrapper goes in bin/; the engine and the app stay side by side in
-        # libexec, where each loads the other as a Python module.
         postFixup = ''
           makeWrapper $out/libexec/lunar-look/lunar-look $out/bin/lunar-look \
             "''${gappsWrapperArgs[@]}"

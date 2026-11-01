@@ -1,10 +1,5 @@
 name: Build Lunar OS Core
 
-# Lunar OS Core: every package compiled from source here (toolchain, kernel,
-# systemd, Mesa, Sway) with Buildroot. The first build takes a few hours;
-# the compiler cache makes later ones much faster. If a build runs out of
-# time, run it again: it picks up from the cache.
-
 on:
   workflow_dispatch:
 
@@ -60,9 +55,6 @@ jobs:
         id: build
         run: |
           cd buildroot
-          # Stop in time to save the caches, so a re-run continues from them.
-          # Lunar's own packages and Mesa first: if one of them fails, it
-          # shows within the first hour instead of after everything else.
           timeout 320m bash -c 'make mesa3d swaylock swayidle mako tofi brightnessctl && make' 2>&1 |
             tee build.log | grep --line-buffered -E '^>>> |Error|error:' || true
           test -f output/images/lunar-core.img.gz || { tail -n 80 build.log; exit 1; }

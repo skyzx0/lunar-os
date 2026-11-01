@@ -1,5 +1,3 @@
-# Reads Lunar's system.conf (sections, "key = value" lines, and a plain list
-# under [apps]) into { values; apps; mounts; }.
 { lib, file }:
 let
   raw = if builtins.pathExists file then builtins.readFile file else "";

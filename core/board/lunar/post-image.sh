@@ -1,6 +1,4 @@
 #!/bin/sh
-# Builds the USB image: GPT, an EFI partition with GRUB and the kernel, and
-# the ext4 root. Then compresses it for download.
 set -e
 BOARD_DIR=$(dirname "$0")
 
